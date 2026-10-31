@@ -52,7 +52,7 @@ class ConversationResource extends JsonResource
             ),
             'members' => $members
                 ->map(fn (User $member): array => [
-                    'role' => (string) $member->pivot->role,
+                    'role' => $member->pivot->role->value,
                     'user' => (new PublicUserResource($member))->resolve($request),
                 ])
                 ->values()

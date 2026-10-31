@@ -50,11 +50,12 @@ class Conversation extends Model
     }
 
     /**
-     * @return BelongsToMany<User, $this>
+     * @return BelongsToMany<User, $this, ConversationMember>
      */
     public function members(): BelongsToMany
     {
         return $this->belongsToMany(User::class, 'conversation_members')
+            ->using(ConversationMember::class)
             ->withPivot(['role', 'joined_at', 'left_at', 'last_read_seq', 'muted_until', 'archived_at'])
             ->withTimestamps();
     }
@@ -105,9 +106,7 @@ class Conversation extends Model
 
         $member = $members->firstWhere('id', $user->id);
 
-        return $member?->pivot?->role === null
-            ? null
-            : ConversationRole::tryFrom((string) $member->pivot->role);
+        return $member?->pivot?->role;
     }
 
     public function otherParticipant(User $user): ?User
