@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useVirtualizer } from '@tanstack/vue-virtual';
 import { ArrowDown, MessageSquare } from '@lucide/vue';
-import { nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import type { ComponentPublicInstance } from 'vue';
 import MessageBubble from '@/components/chat/MessageBubble.vue';
 import { Button } from '@/components/ui/button';
@@ -13,13 +13,18 @@ const chat = useChatStore();
 const scrollElement = ref<HTMLElement | null>(null);
 const stickToBottom = ref(true);
 
-const virtualizer = useVirtualizer({
-    count: chat.messages.length,
-    getScrollElement: () => scrollElement.value,
-    estimateSize: () => 74,
-    overscan: 8,
-    getItemKey: (index) => chat.messages[index]?.id ?? index,
-});
+// The virtualizer only re-reads its options when the options object identity
+// changes, so the count has to be reactive: a plain object freezes `count` at
+// mount time and messages appended later would never be rendered.
+const virtualizer = useVirtualizer(
+    computed(() => ({
+        count: chat.messages.length,
+        getScrollElement: () => scrollElement.value,
+        estimateSize: () => 74,
+        overscan: 8,
+        getItemKey: (index: number) => chat.messages[index]?.id ?? index,
+    })),
+);
 
 function nearBottom(element: HTMLElement): boolean {
     return (

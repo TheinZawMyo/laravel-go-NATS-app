@@ -71,6 +71,11 @@ Every server frame uses one envelope shape:
 
 `connection.ready`, `connection.error`, `pong`, `message.created`, `message.updated`, `message.deleted`, `message.reaction.updated`, `receipt.updated`, `typing.updated`, `presence.updated`, `conversation.updated`, `sync.required`.
 
+Message events (`message.created`, `message.updated`, `message.deleted`) are never produced by the gateway itself. Laravel commits them to the `outbox_events` table in the same transaction as the message, and the worker publishes them to
+`chat.events.conversation.<conversation-id>`; the gateway forwards the envelope unchanged. `data` therefore has exactly the shape of the REST message resource, and the event is delivered to **every** subscriber of the conversation, including the sender's other devices.
+
+Typing and receipts use the ephemeral `chat.typing.*` subjects. Delivery is at-least-once: deduplicate by `event_id` and collapse messages by `id`/`client_message_id`.
+
 Errors are sent as an envelope with `type: "connection.error"` and a `data.code`:
 
 | Code | Meaning |

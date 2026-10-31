@@ -20,6 +20,8 @@ class MessageService
 
     public const MAX_BODY_LENGTH = 4000;
 
+    public function __construct(private readonly RealtimeEventPublisher $events) {}
+
     /**
      * Fetch one page of messages, newest first internally but returned in ascending order.
      *
@@ -118,7 +120,13 @@ class MessageService
                         'updated_at' => Carbon::now(),
                     ]);
 
-                return [$message->load(['sender', 'replyTo.sender']), true];
+                $message = $message->load(['sender', 'replyTo.sender']);
+
+                // Same transaction as the insert: the event exists if and only
+                // if the message was committed.
+                $this->events->messageCreated($message);
+
+                return [$message, true];
             });
         } catch (UniqueConstraintViolationException $exception) {
             $existing = $this->findByIdempotencyKey($sender, $clientMessageId);
@@ -165,6 +173,8 @@ class MessageService
                 'previous_body' => $previousBody,
                 'current_body' => $body,
             ]);
+
+            $this->events->messageUpdated($message->load(['sender', 'replyTo.sender']));
         });
 
         return $message->load(['sender', 'replyTo.sender']);
@@ -181,20 +191,22 @@ class MessageService
                 'deleted_at' => Carbon::now(),
             ])->save();
 
-            if (! $wasLastMessage) {
-                return;
+            if ($wasLastMessage) {
+                $previous = Message::query()
+                    ->where('conversation_id', $conversationId)
+                    ->whereKeyNot($message->id)
+                    ->whereNull('deleted_at')
+                    ->orderByDesc('seq')
+                    ->first();
+
+                DB::table('conversations')
+                    ->where('id', $conversationId)
+                    ->update(['last_message_id' => $previous?->id]);
             }
 
-            $previous = Message::query()
-                ->where('conversation_id', $conversationId)
-                ->whereKeyNot($message->id)
-                ->whereNull('deleted_at')
-                ->orderByDesc('seq')
-                ->first();
-
-            DB::table('conversations')
-                ->where('id', $conversationId)
-                ->update(['last_message_id' => $previous?->id]);
+            // The tombstone (null body, deleted_at) is what subscribers render,
+            // so the realtime frame must carry the deleted state.
+            $this->events->messageDeleted($message->load(['sender', 'replyTo.sender']));
         });
 
         return $message->fresh(['sender', 'replyTo.sender']);

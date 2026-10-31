@@ -273,16 +273,16 @@ Ensure committed messages can be delivered after retries, worker restarts, and t
 
 ## Backend and Infrastructure
 
-- [ ] Create an `outbox_events` table.
-- [ ] Insert the message and outbox event in the same database transaction.
-- [ ] Implement a Go outbox dispatcher.
-- [ ] Configure one durable broker.
-- [ ] Implement retry and backoff policies.
+- [x] Create an `outbox_events` table. (`2026_10_29_000018_create_outbox_events_table.php`)
+- [x] Insert the message and outbox event in the same database transaction. (`App\Services\RealtimeEventPublisher`, called from `MessageService`)
+- [x] Implement a Go outbox dispatcher. (`apps/worker/internal/outbox`)
+- [ ] Configure one durable broker. (core NATS today; JetStream retention still to do)
+- [x] Implement retry and backoff policies. (exponential 1s → 30s, capped by `WORKER_OUTBOX_MAX_ATTEMPTS`)
 - [ ] Implement idempotent event consumers.
-- [ ] Track attempts, last errors, and publication timestamps.
-- [ ] Implement dead-letter or failed-event handling.
-- [ ] Implement gateway event fan-out.
-- [ ] Implement client resynchronization from the last confirmed sequence.
+- [x] Track attempts, last errors, and publication timestamps.
+- [x] Implement dead-letter or failed-event handling. (exhausted rows keep `last_error` and stop retrying)
+- [x] Implement gateway event fan-out. (`chat.events.conversation.*` → subscribers)
+- [ ] Implement client resynchronization from the last confirmed sequence. (clients re-fetch history on reconnect; cursor-based resync still to do)
 
 ## Deliverables
 
@@ -292,10 +292,10 @@ Ensure committed messages can be delivered after retries, worker restarts, and t
 
 ## Completion Criteria
 
-- [ ] A committed message is not lost merely because a worker is temporarily down.
-- [ ] Duplicate broker deliveries do not create duplicate messages.
-- [ ] Failed events can be inspected and retried.
-- [ ] Clients can recover missed messages through the Laravel API.
+- [x] A committed message is not lost merely because a worker is temporarily down.
+- [x] Duplicate broker deliveries do not create duplicate messages. (clients collapse by `id`/`client_message_id`; the API is idempotent per `client_message_id`)
+- [x] Failed events can be inspected and retried. (rows keep `attempts`, `last_error`, `available_at`; clear the error to retry)
+- [x] Clients can recover missed messages through the Laravel API. (history is cursor paginated by `seq`, and clients refetch after reconnect)
 - [ ] Outbox backlog and oldest event age are monitored.
 
 ---

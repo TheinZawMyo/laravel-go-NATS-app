@@ -82,6 +82,10 @@ make queue        # Laravel queue worker
 
 The app is available at http://localhost:8000. Mail is written to the Laravel log by default.
 
+Realtime needs **both** Go services: the gateway holds the WebSocket connections, and the worker publishes committed outbox events to NATS. If the worker is stopped, messages are still saved and shown after a refresh, but nothing arrives live. If the gateway is stopped, the connection status indicator stays in `reconnecting` and messages only arrive on refresh.
+
+The gateway only accepts WebSocket upgrades from origins listed in `ALLOWED_ORIGINS` (`apps/gateway/.env`); add the origin you browse from.
+
 ## Ports
 
 | Service | Port |
@@ -119,7 +123,7 @@ cd apps/web && npm run types:check
 
 - `apps/web/.env.example` — Laravel, PostgreSQL, Redis, NATS, MinIO, gateway URL
 - `apps/gateway/.env.example` — gateway address, credentials, allowed origins
-- `apps/worker/.env.example` — worker address, credentials, poll interval
+- `apps/worker/.env.example` — worker address, credentials, outbox dispatcher poll/batch settings
 
 Never commit real `.env` files or secrets.
 # laravel-go-chat-app

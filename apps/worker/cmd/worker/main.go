@@ -15,6 +15,7 @@ import (
 
 	"chatapp/worker/internal/config"
 	"chatapp/worker/internal/health"
+	"chatapp/worker/internal/outbox"
 )
 
 func main() {
@@ -60,12 +61,43 @@ func main() {
 		NATS:  nc,
 	})
 
-	logger.Info("worker started", "instance", cfg.InstanceID, "poll", cfg.PollEvery.String())
+	dispatcher := outbox.New(
+		outbox.NewPostgresStore(db),
+		outbox.NewNATSPublisher(nc),
+		logger,
+		outbox.Options{
+			SubjectPrefix: cfg.EventSubjectPrefix,
+			BatchSize:     cfg.OutboxBatchSize,
+			MaxAttempts:   cfg.OutboxMaxAttempts,
+			Interval:      cfg.OutboxPollEvery,
+		},
+	)
 
-	if err := healthServer.Run(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	dispatcherDone := make(chan struct{})
+
+	go func() {
+		defer close(dispatcherDone)
+
+		dispatcher.Run(ctx)
+	}()
+
+	logger.Info(
+		"worker started",
+		"instance", cfg.InstanceID,
+		"poll", cfg.PollEvery.String(),
+		"outbox_poll", cfg.OutboxPollEvery.String(),
+	)
+
+	err = healthServer.Run(ctx)
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("worker stopped", "error", err)
+		stop()
+		<-dispatcherDone
+
 		os.Exit(1)
 	}
+
+	<-dispatcherDone
 
 	logger.Info("worker stopped")
 }
