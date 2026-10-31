@@ -47,9 +47,7 @@ class PresenceService
         $models = [];
 
         foreach ($users as $user) {
-            if ($user instanceof User) {
-                $models[$user->id] = $user;
-            }
+            $models[$user->id] = $user;
         }
 
         if ($models === []) {

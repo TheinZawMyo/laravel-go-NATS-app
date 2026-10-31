@@ -31,16 +31,24 @@ class ConversationResource extends JsonResource
             ? $this->otherParticipant($viewer)
             : null;
 
+        $mutedUntil = $this->muted_until ?? null;
+
         return [
             'id' => $this->id,
             'type' => $this->type->value,
             'title' => $this->title,
+            'description' => $this->description,
             'avatar_url' => $this->avatar_key !== null
                 ? Storage::disk('public')->url($this->avatar_key)
                 : null,
             'unread_count' => (int) ($this->unread_count ?? 0),
             'last_read_seq' => (int) ($this->viewer_last_read_seq ?? 0),
             'next_message_seq' => (int) $this->next_message_seq,
+            'viewer_role' => $this->viewer_role ?? null,
+            'history_visible_to_new_members' => $this->sharesHistoryWithNewMembers(),
+            'muted_until' => $mutedUntil,
+            'is_muted' => $mutedUntil !== null && $mutedUntil->isFuture(),
+            'archived' => (bool) ($this->viewer_archived ?? false),
             'participant' => $participant !== null
                 ? (new PublicUserResource($participant))->resolve($request)
                 : null,

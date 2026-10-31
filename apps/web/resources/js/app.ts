@@ -17,6 +17,8 @@ void createInertiaApp({
                 return null;
             case name === 'Chat':
                 return ChatLayout;
+            case name === 'Join':
+                return ChatLayout;
             case name.startsWith('auth/'):
                 return AuthLayout;
             case name.startsWith('settings/'):

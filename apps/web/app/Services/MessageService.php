@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\MessageEdit;
+use App\Models\MessagePin;
 use App\Models\User;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
@@ -20,21 +21,45 @@ class MessageService
 
     public const MAX_BODY_LENGTH = 4000;
 
-    public function __construct(private readonly RealtimeEventPublisher $events) {}
+    /**
+     * Telegram-style ceiling that keeps the pinned-message list renderable.
+     */
+    public const MAX_PINS = 100;
+
+    public function __construct(
+        private readonly RealtimeEventPublisher $events,
+        private readonly ContactService $contacts,
+    ) {}
 
     /**
      * Fetch one page of messages, newest first internally but returned in ascending order.
      *
+     * The viewer's `history_from_seq` is applied here: groups that hide history
+     * from new members must not leak older messages through pagination either.
+     *
      * @return array{0: Collection<int, Message>, 1: bool, 2: int|null}
      */
-    public function history(Conversation $conversation, ?int $beforeSeq = null, int $limit = self::DEFAULT_LIMIT): array
-    {
+    public function history(
+        User $viewer,
+        Conversation $conversation,
+        ?int $beforeSeq = null,
+        int $limit = self::DEFAULT_LIMIT,
+    ): array {
         $limit = max(1, min($limit, self::MAX_LIMIT));
+
+        $historyFromSeq = (int) DB::table('conversation_members')
+            ->where('conversation_id', $conversation->id)
+            ->where('user_id', $viewer->id)
+            ->value('history_from_seq');
 
         $query = $conversation->messages()
             ->withTrashed()
             ->with(['sender', 'replyTo.sender'])
             ->orderByDesc('seq');
+
+        if ($historyFromSeq > 0) {
+            $query->where('seq', '>=', $historyFromSeq);
+        }
 
         if ($beforeSeq !== null) {
             $query->where('seq', '<', $beforeSeq);
@@ -93,6 +118,8 @@ class MessageService
                 if ($replyToMessageId !== null) {
                     $this->assertReplyBelongsToConversation($lockedConversation, $replyToMessageId);
                 }
+
+                $this->assertNotBlocked($sender, $lockedConversation);
 
                 $seq = (int) $lockedConversation->next_message_seq + 1;
 
@@ -212,6 +239,95 @@ class MessageService
         return $message->fresh(['sender', 'replyTo.sender']);
     }
 
+    /**
+     * Pinned messages for one conversation, newest pin first.
+     *
+     * @return Collection<int, MessagePin>
+     */
+    public function pins(Conversation $conversation): Collection
+    {
+        return MessagePin::query()
+            ->with(['message.sender', 'message.replyTo.sender', 'pinnedBy'])
+            ->where('conversation_id', $conversation->id)
+            ->orderByDesc('pinned_at')
+            ->get();
+    }
+
+    /**
+     * Pin a message. Pinning an already pinned message is a no-op, so the
+     * endpoint is safe to retry from a flaky client.
+     */
+    public function pin(User $actor, Conversation $conversation, Message $message): MessagePin
+    {
+        if ($message->conversation_id !== $conversation->id || $message->deleted_at !== null) {
+            throw ValidationException::withMessages([
+                'message' => __('This message cannot be pinned.'),
+            ]);
+        }
+
+        $existing = $this->findPin($message);
+
+        if ($existing !== null) {
+            return $existing;
+        }
+
+        $pinCount = MessagePin::query()
+            ->where('conversation_id', $conversation->id)
+            ->count();
+
+        if ($pinCount >= self::MAX_PINS) {
+            throw ValidationException::withMessages([
+                'message' => __('This conversation has reached the maximum number of pinned messages.'),
+            ]);
+        }
+
+        DB::transaction(function () use ($actor, $message): void {
+            DB::table('message_pins')->insertOrIgnore([
+                'conversation_id' => $message->conversation_id,
+                'message_id' => $message->id,
+                'pinned_by' => $actor->id,
+                'pinned_at' => Carbon::now(),
+            ]);
+
+            $this->events->messagePinned($message, (string) $actor->id);
+        });
+
+        return $this->findPin($message) ?? throw ValidationException::withMessages([
+            'message' => __('This message cannot be pinned.'),
+        ]);
+    }
+
+    /**
+     * Remove a pin. Returns false when the message was not pinned.
+     */
+    public function unpin(Conversation $conversation, Message $message): bool
+    {
+        if ($message->conversation_id !== $conversation->id) {
+            return false;
+        }
+
+        return DB::transaction(function () use ($message): bool {
+            $deleted = DB::table('message_pins')
+                ->where('message_id', $message->id)
+                ->delete();
+
+            if ($deleted > 0) {
+                $this->events->messageUnpinned($message);
+            }
+
+            return $deleted > 0;
+        });
+    }
+
+    private function findPin(Message $message): ?MessagePin
+    {
+        return MessagePin::query()
+            ->with(['message.sender', 'message.replyTo.sender', 'pinnedBy'])
+            ->where('conversation_id', $message->conversation_id)
+            ->where('message_id', $message->id)
+            ->first();
+    }
+
     private function findByIdempotencyKey(User $sender, string $clientMessageId): ?Message
     {
         return Message::query()
@@ -230,6 +346,26 @@ class MessageService
         }
 
         return $message->load(['sender', 'replyTo.sender']);
+    }
+
+    /**
+     * A block in either direction closes direct messaging, even for a
+     * conversation that already exists. Groups stay open so a block cannot be
+     * used to silence someone in front of everybody else.
+     */
+    private function assertNotBlocked(User $sender, Conversation $conversation): void
+    {
+        if ($conversation->isGroup()) {
+            return;
+        }
+
+        $other = $conversation->otherParticipant($sender);
+
+        if ($other !== null && $this->contacts->hasBlockBetween($sender, $other)) {
+            throw ValidationException::withMessages([
+                'body' => __('You cannot send messages to this user.'),
+            ]);
+        }
     }
 
     private function assertReplyBelongsToConversation(Conversation $conversation, string $replyToMessageId): void

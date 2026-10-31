@@ -15,6 +15,7 @@ use Illuminate\Support\Carbon;
  * @property Carbon $joined_at
  * @property Carbon|null $left_at
  * @property int $last_read_seq
+ * @property int $history_from_seq
  * @property Carbon|null $muted_until
  * @property Carbon|null $archived_at
  * @property Carbon|null $created_at
@@ -34,6 +35,7 @@ class ConversationMember extends Pivot
             'joined_at' => 'datetime',
             'left_at' => 'datetime',
             'last_read_seq' => 'integer',
+            'history_from_seq' => 'integer',
             'muted_until' => 'datetime',
             'archived_at' => 'datetime',
         ];

@@ -4,6 +4,8 @@ import {
     CheckCheck,
     MoreHorizontal,
     Pencil,
+    Pin,
+    PinOff,
     Reply,
     RotateCcw,
     Trash2,
@@ -46,6 +48,10 @@ const localError = ref<string | null>(null);
 
 const isOwn = computed(() => props.message.sender.id === user.value?.id);
 const isDeleted = computed(() => props.message.deleted_at !== null);
+const pinned = computed(() =>
+    chat.isPinned(props.message.conversation_id, props.message.id),
+);
+const canTogglePin = computed(() => chat.canPin() && !isDeleted.value);
 
 /**
  * Direct conversations have at most two members, so "the highest cursor of
@@ -104,6 +110,27 @@ async function saveEdit(): Promise<void> {
                 : 'Unable to edit this message.';
     } finally {
         saving.value = false;
+    }
+}
+
+/**
+ * Pinning is idempotent on the server, so a client that does not have the pin
+ * list loaded yet can still "pin" safely: the request just confirms the state.
+ */
+async function togglePin(): Promise<void> {
+    localError.value = null;
+
+    try {
+        if (pinned.value) {
+            await chat.unpinMessage(props.message);
+        } else {
+            await chat.pinMessage(props.message);
+        }
+    } catch (error) {
+        localError.value =
+            error instanceof ApiError
+                ? error.message
+                : 'Unable to update this pin.';
     }
 }
 
@@ -279,6 +306,11 @@ async function remove(): Promise<void> {
                     <DropdownMenuItem @select="chat.setReplyTo(message)">
                         <Reply />
                         Reply
+                    </DropdownMenuItem>
+                    <DropdownMenuItem v-if="canTogglePin" @select="togglePin">
+                        <PinOff v-if="pinned" />
+                        <Pin v-else />
+                        {{ pinned ? 'Unpin' : 'Pin' }}
                     </DropdownMenuItem>
                     <template v-if="isOwn">
                         <DropdownMenuItem @select="startEditing">

@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChatMessage, Conversation, User } from '@/types';
+import type { ChatMessage, Conversation, MessagePin, User } from '@/types';
 import { useAuthStore } from './auth';
 import { useChatStore } from './chat';
 
@@ -36,10 +36,16 @@ function createConversation(
         id: 'conversation-1',
         type: 'direct',
         title: null,
+        description: null,
         avatar_url: null,
         unread_count: 0,
         last_read_seq: 0,
         next_message_seq: 0,
+        viewer_role: 'member',
+        history_visible_to_new_members: false,
+        muted_until: null,
+        is_muted: false,
+        archived: false,
         participant: other,
         last_message: null,
         members: [
@@ -579,5 +585,142 @@ describe('chat store', () => {
         expect(JSON.parse(options.body as string)).toEqual({
             username: 'alice',
         });
+    });
+
+    it('merges a partial mute response without losing the preview', async () => {
+        const store = useChatStore();
+        const activeConversation = createConversation({
+            last_message: message(),
+        });
+
+        store.initialize({
+            conversations: [activeConversation],
+            activeConversation,
+            activeMessages: [],
+            activeHasMore: false,
+            activeNextCursor: null,
+        });
+
+        fetchMock.mockResolvedValueOnce(
+            success({
+                data: {
+                    id: conversation.id,
+                    is_muted: true,
+                    muted_until: '2030-01-01T00:00:00Z',
+                },
+            }),
+        );
+
+        await store.setMuted(conversation.id, true);
+
+        expect(store.activeConversation?.is_muted).toBe(true);
+        expect(store.activeConversation?.muted_until).toBe(
+            '2030-01-01T00:00:00Z',
+        );
+        expect(store.activeConversation?.last_message?.id).toBe('message-1');
+        expect(store.activeConversation?.participant?.username).toBe('alice');
+
+        const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+        expect(url).toBe(`/api/v1/conversations/${conversation.id}/mute`);
+        expect(options.method).toBe('POST');
+        expect(JSON.parse(options.body as string)).toEqual({
+            is_muted: true,
+            until: null,
+        });
+    });
+
+    it('archives a conversation through the API', async () => {
+        const store = useChatStore();
+        const activeConversation = createConversation();
+
+        store.initialize({
+            conversations: [activeConversation],
+            activeConversation,
+            activeMessages: [],
+            activeHasMore: false,
+            activeNextCursor: null,
+        });
+
+        fetchMock.mockResolvedValueOnce(
+            success({ data: { id: conversation.id, archived: true } }),
+        );
+
+        await store.setArchived(conversation.id, true);
+
+        expect(store.activeConversation?.archived).toBe(true);
+
+        const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+        expect(options.method).toBe('POST');
+        expect(JSON.parse(options.body as string)).toEqual({ archived: true });
+    });
+
+    it('loads pinned messages and unpins one', async () => {
+        const store = useChatStore();
+        const activeConversation = createConversation();
+
+        store.initialize({
+            conversations: [activeConversation],
+            activeConversation,
+            activeMessages: [],
+            activeHasMore: false,
+            activeNextCursor: null,
+        });
+
+        const pin: MessagePin = {
+            conversation_id: conversation.id,
+            message: message(),
+            pinned_by: user,
+            pinned_at: '2026-10-30T00:00:00Z',
+        };
+
+        fetchMock.mockResolvedValueOnce(success({ data: [pin] }));
+        await store.fetchPins(conversation.id);
+
+        expect(store.isPinned(conversation.id, 'message-1')).toBe(true);
+
+        fetchMock.mockResolvedValueOnce({
+            ok: true,
+            status: 204,
+            json: async () => null,
+        } as Response);
+
+        await store.unpinMessage(pin.message);
+
+        expect(store.pinsFor(conversation.id)).toHaveLength(0);
+
+        const [url, options] = fetchMock.mock.calls[1] as [string, RequestInit];
+        expect(url).toBe('/api/v1/messages/message-1/pin');
+        expect(options.method).toBe('DELETE');
+    });
+
+    it('removes a conversation the viewer leaves', async () => {
+        const store = useChatStore();
+        const group = createConversation({
+            id: 'group-1',
+            type: 'group',
+            title: 'Team',
+            participant: null,
+            viewer_role: 'member',
+        });
+
+        store.initialize({
+            conversations: [group],
+            activeConversation: group,
+            activeMessages: [],
+            activeHasMore: false,
+            activeNextCursor: null,
+        });
+
+        fetchMock.mockResolvedValueOnce({
+            ok: true,
+            status: 204,
+            json: async () => null,
+        } as Response);
+
+        await store.leaveGroup('group-1');
+
+        expect(store.conversations).toHaveLength(0);
+        expect(store.activeConversation).toBeNull();
     });
 });

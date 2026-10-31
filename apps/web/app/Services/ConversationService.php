@@ -19,6 +19,7 @@ class ConversationService
     public function __construct(
         private readonly RealtimeEventPublisher $events,
         private readonly PresenceService $presence,
+        private readonly ContactService $contacts,
     ) {}
 
     /**
@@ -35,6 +36,12 @@ class ConversationService
         if (! $other->isActive()) {
             throw ValidationException::withMessages([
                 'username' => __('This account is not available.'),
+            ]);
+        }
+
+        if ($this->contacts->hasBlockBetween($actor, $other)) {
+            throw ValidationException::withMessages([
+                'username' => __('You cannot start a conversation with this user.'),
             ]);
         }
 
@@ -55,6 +62,7 @@ class ConversationService
                     'type' => ConversationType::Direct,
                     'created_by' => $actor->id,
                     'direct_pair_key' => $pairKey,
+                    'history_visible_to_new_members' => true,
                 ]);
 
                 $joinedAt = Carbon::now();
@@ -130,6 +138,40 @@ class ConversationService
             $user,
             $unreadCounts[$conversation->id] ?? 0,
         );
+    }
+
+    /**
+     * Mute or unmute notifications for one membership.
+     *
+     * `muted_until` is the only place mute is stored; "forever" is represented
+     * by a far future timestamp so the column stays a single source of truth.
+     */
+    public function setMuted(User $user, Conversation $conversation, ?Carbon $until): Conversation
+    {
+        DB::table('conversation_members')
+            ->where('conversation_id', $conversation->id)
+            ->where('user_id', $user->id)
+            ->whereNull('left_at')
+            ->update([
+                'muted_until' => $until,
+                'updated_at' => Carbon::now(),
+            ]);
+
+        return $this->prepareForViewer($user, $conversation->refresh());
+    }
+
+    public function setArchived(User $user, Conversation $conversation, bool $archived): Conversation
+    {
+        DB::table('conversation_members')
+            ->where('conversation_id', $conversation->id)
+            ->where('user_id', $user->id)
+            ->whereNull('left_at')
+            ->update([
+                'archived_at' => $archived ? Carbon::now() : null,
+                'updated_at' => Carbon::now(),
+            ]);
+
+        return $this->prepareForViewer($user, $conversation->refresh());
     }
 
     /**
@@ -213,6 +255,8 @@ class ConversationService
             })
             ->whereIn('messages.conversation_id', $conversationIds)
             ->whereColumn('messages.seq', '>', 'conversation_members.last_read_seq')
+            // Messages hidden by the history setting never count as unread.
+            ->whereColumn('messages.seq', '>=', 'conversation_members.history_from_seq')
             ->where('messages.sender_id', '!=', $user->id)
             ->whereNull('messages.deleted_at')
             ->groupBy('messages.conversation_id')
@@ -227,6 +271,10 @@ class ConversationService
         $membership = $conversation->members->firstWhere('id', $user->id);
 
         $conversation->setAttribute('viewer_last_read_seq', (int) ($membership?->pivot->last_read_seq ?? 0));
+        $conversation->setAttribute('viewer_history_from_seq', (int) ($membership?->pivot->history_from_seq ?? 0));
+        $conversation->setAttribute('viewer_role', $membership?->pivot?->role?->value);
+        $conversation->setAttribute('muted_until', $membership?->pivot?->muted_until);
+        $conversation->setAttribute('viewer_archived', $membership?->pivot?->archived_at !== null);
         $conversation->setAttribute('unread_count', $unreadCount);
 
         return $conversation;

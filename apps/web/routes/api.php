@@ -1,10 +1,17 @@
 <?php
 
+use App\Http\Controllers\Api\V1\BlockController;
+use App\Http\Controllers\Api\V1\ContactController;
+use App\Http\Controllers\Api\V1\ContactRequestController;
 use App\Http\Controllers\Api\V1\ConversationController;
 use App\Http\Controllers\Api\V1\DeviceController;
 use App\Http\Controllers\Api\V1\GatewayTokenController;
+use App\Http\Controllers\Api\V1\GroupController;
+use App\Http\Controllers\Api\V1\GroupInviteController;
+use App\Http\Controllers\Api\V1\GroupMemberController;
 use App\Http\Controllers\Api\V1\MeController;
 use App\Http\Controllers\Api\V1\MessageController;
+use App\Http\Controllers\Api\V1\MessagePinController;
 use App\Http\Controllers\Api\V1\UserController;
 use Illuminate\Support\Facades\Route;
 
@@ -13,7 +20,22 @@ Route::middleware(['web', 'auth'])->prefix('v1')->group(function () {
 
     Route::get('gateway/token', GatewayTokenController::class)->name('api.v1.gateway.token');
 
+    Route::get('users', [UserController::class, 'index'])->name('api.v1.users.index');
     Route::get('users/{username}', [UserController::class, 'show'])->name('api.v1.users.show');
+
+    Route::get('contacts', [ContactController::class, 'index'])->name('api.v1.contacts.index');
+    Route::patch('contacts/{username}', [ContactController::class, 'update'])->name('api.v1.contacts.update');
+    Route::delete('contacts/{username}', [ContactController::class, 'destroy'])->name('api.v1.contacts.destroy');
+
+    Route::get('contact-requests', [ContactRequestController::class, 'index'])->name('api.v1.contact-requests.index');
+    Route::post('contact-requests', [ContactRequestController::class, 'store'])->name('api.v1.contact-requests.store');
+    Route::post('contact-requests/{contactRequest}/accept', [ContactRequestController::class, 'accept'])->name('api.v1.contact-requests.accept');
+    Route::post('contact-requests/{contactRequest}/reject', [ContactRequestController::class, 'reject'])->name('api.v1.contact-requests.reject');
+    Route::post('contact-requests/{contactRequest}/cancel', [ContactRequestController::class, 'cancel'])->name('api.v1.contact-requests.cancel');
+
+    Route::get('blocks', [BlockController::class, 'index'])->name('api.v1.blocks.index');
+    Route::post('blocks', [BlockController::class, 'store'])->name('api.v1.blocks.store');
+    Route::delete('blocks/{username}', [BlockController::class, 'destroy'])->name('api.v1.blocks.destroy');
 
     Route::get('devices', [DeviceController::class, 'index'])->name('api.v1.devices.index');
     Route::post('devices', [DeviceController::class, 'store'])->name('api.v1.devices.store');
@@ -23,6 +45,26 @@ Route::middleware(['web', 'auth'])->prefix('v1')->group(function () {
     Route::post('conversations/direct', [ConversationController::class, 'storeDirect'])->name('api.v1.conversations.store-direct');
     Route::get('conversations/{conversation}', [ConversationController::class, 'show'])->name('api.v1.conversations.show');
     Route::post('conversations/{conversation}/read', [ConversationController::class, 'read'])->name('api.v1.conversations.read');
+    Route::post('conversations/{conversation}/mute', [ConversationController::class, 'mute'])->name('api.v1.conversations.mute');
+    Route::post('conversations/{conversation}/archive', [ConversationController::class, 'archive'])->name('api.v1.conversations.archive');
+
+    Route::post('groups', [GroupController::class, 'store'])->name('api.v1.groups.store');
+    Route::patch('groups/{conversation}', [GroupController::class, 'update'])->name('api.v1.groups.update');
+    Route::get('groups/{conversation}/members', [GroupController::class, 'members'])->name('api.v1.groups.members.index');
+    Route::post('groups/{conversation}/members', [GroupMemberController::class, 'store'])->name('api.v1.groups.members.store');
+    Route::delete('groups/{conversation}/members/{username}', [GroupMemberController::class, 'destroy'])->name('api.v1.groups.members.destroy');
+    Route::post('groups/{conversation}/members/{username}/role', [GroupMemberController::class, 'updateRole'])->name('api.v1.groups.members.role');
+    Route::post('groups/{conversation}/leave', [GroupMemberController::class, 'leave'])->name('api.v1.groups.leave');
+
+    Route::get('groups/{conversation}/invites', [GroupInviteController::class, 'index'])->name('api.v1.groups.invites.index');
+    Route::post('groups/{conversation}/invites', [GroupInviteController::class, 'store'])->name('api.v1.groups.invites.store');
+    Route::delete('groups/{conversation}/invites/{invite}', [GroupInviteController::class, 'destroy'])->name('api.v1.groups.invites.destroy');
+    Route::get('invites/{token}', [GroupInviteController::class, 'preview'])->name('api.v1.invites.preview');
+    Route::post('invites/{token}/join', [GroupInviteController::class, 'redeem'])->name('api.v1.invites.redeem');
+
+    Route::get('conversations/{conversation}/pins', [MessagePinController::class, 'index'])->name('api.v1.pins.index');
+    Route::post('messages/{message}/pin', [MessagePinController::class, 'store'])->name('api.v1.pins.store');
+    Route::delete('messages/{message}/pin', [MessagePinController::class, 'destroy'])->name('api.v1.pins.destroy');
 
     Route::get('conversations/{conversation}/messages', [MessageController::class, 'index'])->name('api.v1.messages.index');
     Route::post('conversations/{conversation}/messages', [MessageController::class, 'store'])->name('api.v1.messages.store');

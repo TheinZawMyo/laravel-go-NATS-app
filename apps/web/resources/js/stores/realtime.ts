@@ -6,8 +6,13 @@ import { RealtimeClient } from '@/lib/realtime';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
 import { useConnectionStore } from '@/stores/connection';
-import type { ChatMessage, Conversation } from '@/types';
+import { useContactsStore } from '@/stores/contacts';
+import type { ChatMessage } from '@/types';
 import type {
+    ContactRequestEventData,
+    ConversationChangedEventData,
+    ConversationRemovedEventData,
+    MessagePinnedEventData,
     PresenceEventData,
     ReceiptEventData,
     RealtimeEnvelope,
@@ -28,6 +33,7 @@ export const useRealtimeStore = defineStore('realtime', () => {
     const auth = useAuthStore();
     const chat = useChatStore();
     const connection = useConnectionStore();
+    const contacts = useContactsStore();
 
     const typing = ref<Record<string, Record<string, TypingEntry>>>({});
 
@@ -163,7 +169,33 @@ export const useRealtimeStore = defineStore('realtime', () => {
                 chat.applyRealtimeMessage(envelope.data as ChatMessage);
                 break;
             case 'conversation.updated':
-                chat.upsertConversation(envelope.data as Conversation);
+                applyConversationChanged(
+                    envelope.data as ConversationChangedEventData,
+                );
+                break;
+            case 'conversation.removed':
+                applyConversationRemoved(
+                    envelope.data as ConversationRemovedEventData,
+                );
+                break;
+            case 'message.pinned':
+            case 'message.unpinned':
+                chat.invalidatePins(
+                    (envelope.data as MessagePinnedEventData | null)
+                        ?.conversation_id ??
+                        envelope.conversation_id ??
+                        '',
+                );
+                break;
+            case 'contact.request.created':
+            case 'contact.request.updated':
+                applyContactRequest(
+                    (envelope.data as ContactRequestEventData | null) ?? null,
+                );
+                break;
+            case 'contact.updated':
+            case 'block.updated':
+                void contacts.fetchAll();
                 break;
             case 'typing.updated':
                 applyTyping(envelope.data as TypingEventData);
@@ -196,6 +228,36 @@ export const useRealtimeStore = defineStore('realtime', () => {
         }
 
         void chat.syncConversation(data.conversation_id);
+    }
+
+    /**
+     * `conversation.updated` frames are viewer independent (they carry no read
+     * cursor or unread count), so the only safe reaction is refetching the
+     * viewer's own representation.
+     */
+    function applyConversationChanged(
+        data: ConversationChangedEventData,
+    ): void {
+        void chat.refreshConversation(data.conversation_id);
+    }
+
+    function applyConversationRemoved(
+        data: ConversationRemovedEventData,
+    ): void {
+        chat.removeConversation(data.conversation_id);
+    }
+
+    /**
+     * The request payload is rendered for whoever published the event, so its
+     * `direction` cannot be trusted here. Refetching is cheap and keeps the
+     * incoming and outgoing lists correct on both devices.
+     */
+    function applyContactRequest(data: ContactRequestEventData | null): void {
+        void contacts.fetchRequests();
+
+        if (data?.status === 'accepted') {
+            void contacts.fetchContacts();
+        }
     }
 
     function applySyncRequired(envelope: RealtimeEnvelope): void {

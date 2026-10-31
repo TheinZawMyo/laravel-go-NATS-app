@@ -5,7 +5,10 @@ import { useAuthStore } from '@/stores/auth';
 import type {
     ChatMessage,
     Conversation,
+    ConversationInvite,
+    ConversationRole,
     MessagePage,
+    MessagePin,
     MessageStatus,
     PublicUser,
 } from '@/types';
@@ -16,6 +19,28 @@ type ChatPagePayload = {
     activeMessages: ChatMessage[];
     activeHasMore: boolean;
     activeNextCursor: number | null;
+};
+
+/**
+ * A conversation representation may arrive without `last_message` (the server
+ * only includes it when the relation was loaded), so partial responses are
+ * merged into the known summary instead of replacing it.
+ */
+export type ConversationPatch = Partial<Omit<Conversation, 'id'>> & {
+    id: string;
+};
+
+export type CreateGroupInput = {
+    title: string;
+    description?: string | null;
+    memberIds?: string[];
+    historyVisibleToNewMembers?: boolean;
+};
+
+export type UpdateGroupInput = {
+    title?: string;
+    description?: string | null;
+    historyVisibleToNewMembers?: boolean;
 };
 
 function uuid(): string {
@@ -68,6 +93,25 @@ function errorMessage(error: unknown): string {
     return 'Something went wrong. Please try again.';
 }
 
+/**
+ * Mirrors the server's `ConversationRole::rank()` so the UI offers exactly the
+ * actions the policies will accept.
+ */
+function roleRank(role: ConversationRole | null | undefined): number {
+    switch (role) {
+        case 'owner':
+            return 4;
+        case 'admin':
+            return 3;
+        case 'moderator':
+            return 2;
+        case 'member':
+            return 1;
+        default:
+            return 0;
+    }
+}
+
 async function messageRequest(
     url: string,
     options: Parameters<typeof apiRequest>[1],
@@ -99,6 +143,14 @@ export const useChatStore = defineStore('chat', () => {
     const refreshing = ref(false);
     const sending = ref(false);
     const error = ref<string | null>(null);
+
+    /** Pinned messages per conversation, loaded lazily by the pins panel. */
+    const pins = ref<Record<string, MessagePin[]>>({});
+    const loadingPins = ref(false);
+
+    /** Invite links per group, loaded lazily by the group info dialog. */
+    const invites = ref<Record<string, ConversationInvite[]>>({});
+    const loadingInvites = ref(false);
 
     let selectionRequest = 0;
 
@@ -326,6 +378,79 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         conversations.value = sortConversations(conversations.value);
+    }
+
+    /**
+     * Copy only the keys a response actually carried. Assigning the whole
+     * payload would drop `last_message` (and with it the list preview) every
+     * time the server answered with a partially loaded conversation.
+     */
+    function assignDefined(target: object, patch: object): void {
+        const writable = target as Record<string, unknown>;
+
+        Object.entries(patch).forEach(([key, value]) => {
+            if (value !== undefined) {
+                writable[key] = value;
+            }
+        });
+    }
+
+    function mergeConversation(patch: ConversationPatch): void {
+        const current = conversations.value.find(
+            (conversation) => conversation.id === patch.id,
+        );
+
+        if (current === undefined) {
+            // A conversation this client has never seen (for example a group a
+            // moderator just added the user to) can only be summarised by the
+            // server, so refetch instead of inventing a partial entry.
+            void fetchConversations();
+
+            return;
+        }
+
+        assignDefined(current, patch);
+        conversations.value = sortConversations(conversations.value);
+    }
+
+    function removeConversation(conversationId: string): void {
+        conversations.value = conversations.value.filter(
+            (conversation) => conversation.id !== conversationId,
+        );
+
+        delete appliedSeq.value[conversationId];
+        delete pins.value[conversationId];
+        delete invites.value[conversationId];
+
+        if (activeConversationId.value === conversationId) {
+            closeConversation();
+        }
+    }
+
+    /**
+     * Refetch one summary without disturbing the open thread. Realtime
+     * `conversation.updated` frames carry no viewer state, so the client asks
+     * for its own representation.
+     */
+    async function refreshConversation(conversationId: string): Promise<void> {
+        try {
+            const response = await apiRequest<{ data: Conversation }>(
+                `/api/v1/conversations/${conversationId}`,
+            );
+
+            upsertConversation(response.data);
+        } catch (requestError) {
+            if (
+                requestError instanceof ApiError &&
+                requestError.status === 404
+            ) {
+                removeConversation(conversationId);
+
+                return;
+            }
+
+            error.value = errorMessage(requestError);
+        }
     }
 
     function touchConversation(message: ChatMessage): void {
@@ -734,6 +859,295 @@ export const useChatStore = defineStore('chat', () => {
         return response.data;
     }
 
+    function canManageGroup(
+        conversation: Conversation | null = activeConversation.value,
+    ): boolean {
+        return (
+            conversation?.type === 'group' &&
+            roleRank(conversation.viewer_role) >= roleRank('admin')
+        );
+    }
+
+    function canAssignRoles(
+        conversation: Conversation | null = activeConversation.value,
+    ): boolean {
+        return (
+            conversation?.type === 'group' &&
+            conversation.viewer_role === 'owner'
+        );
+    }
+
+    function canPin(
+        conversation: Conversation | null = activeConversation.value,
+    ): boolean {
+        if (conversation === null) {
+            return false;
+        }
+
+        if (conversation.type === 'direct') {
+            return true;
+        }
+
+        return roleRank(conversation.viewer_role) >= roleRank('moderator');
+    }
+
+    async function createGroup(input: CreateGroupInput): Promise<Conversation> {
+        const response = await apiRequest<{ data: Conversation }>(
+            '/api/v1/groups',
+            {
+                method: 'POST',
+                body: {
+                    title: input.title,
+                    description: input.description ?? null,
+                    member_ids: input.memberIds ?? [],
+                    history_visible_to_new_members:
+                        input.historyVisibleToNewMembers ?? false,
+                },
+            },
+        );
+
+        upsertConversation(response.data);
+        await selectConversation(response.data.id);
+
+        return response.data;
+    }
+
+    async function updateGroup(
+        conversationId: string,
+        input: UpdateGroupInput,
+    ): Promise<void> {
+        const response = await apiRequest<{ data: Conversation }>(
+            `/api/v1/groups/${conversationId}`,
+            {
+                method: 'PATCH',
+                body: {
+                    title: input.title,
+                    description: input.description,
+                    history_visible_to_new_members:
+                        input.historyVisibleToNewMembers,
+                },
+            },
+        );
+
+        mergeConversation(response.data);
+    }
+
+    async function addGroupMembers(
+        conversationId: string,
+        userIds: string[],
+    ): Promise<void> {
+        const response = await apiRequest<{ data: Conversation }>(
+            `/api/v1/groups/${conversationId}/members`,
+            {
+                method: 'POST',
+                body: { user_ids: userIds },
+            },
+        );
+
+        mergeConversation(response.data);
+    }
+
+    async function removeGroupMember(
+        conversationId: string,
+        username: string,
+    ): Promise<void> {
+        const response = await apiRequest<{ data: Conversation }>(
+            `/api/v1/groups/${conversationId}/members/${username}`,
+            { method: 'DELETE' },
+        );
+
+        mergeConversation(response.data);
+    }
+
+    async function changeGroupMemberRole(
+        conversationId: string,
+        username: string,
+        role: ConversationRole,
+    ): Promise<void> {
+        const response = await apiRequest<{ data: Conversation }>(
+            `/api/v1/groups/${conversationId}/members/${username}/role`,
+            {
+                method: 'POST',
+                body: { role },
+            },
+        );
+
+        mergeConversation(response.data);
+    }
+
+    async function leaveGroup(conversationId: string): Promise<void> {
+        await apiRequest<void>(`/api/v1/groups/${conversationId}/leave`, {
+            method: 'POST',
+        });
+
+        removeConversation(conversationId);
+    }
+
+    async function setMuted(
+        conversationId: string,
+        isMuted: boolean,
+        until: string | null = null,
+    ): Promise<void> {
+        const response = await apiRequest<{ data: Conversation }>(
+            `/api/v1/conversations/${conversationId}/mute`,
+            {
+                method: 'POST',
+                body: { is_muted: isMuted, until: isMuted ? until : null },
+            },
+        );
+
+        mergeConversation(response.data);
+    }
+
+    async function setArchived(
+        conversationId: string,
+        archived: boolean,
+    ): Promise<void> {
+        const response = await apiRequest<{ data: Conversation }>(
+            `/api/v1/conversations/${conversationId}/archive`,
+            {
+                method: 'POST',
+                body: { archived },
+            },
+        );
+
+        mergeConversation(response.data);
+    }
+
+    function pinsFor(conversationId: string | null): MessagePin[] {
+        return conversationId === null
+            ? []
+            : (pins.value[conversationId] ?? []);
+    }
+
+    function isPinned(
+        conversationId: string | null,
+        messageId: string,
+    ): boolean {
+        return pinsFor(conversationId).some(
+            (pin) => pin.message.id === messageId,
+        );
+    }
+
+    async function fetchPins(conversationId: string): Promise<void> {
+        loadingPins.value = true;
+
+        try {
+            const response = await apiRequest<{ data: MessagePin[] }>(
+                `/api/v1/conversations/${conversationId}/pins`,
+            );
+
+            pins.value = { ...pins.value, [conversationId]: response.data };
+        } catch (requestError) {
+            error.value = errorMessage(requestError);
+        } finally {
+            loadingPins.value = false;
+        }
+    }
+
+    async function pinMessage(message: ChatMessage): Promise<void> {
+        const response = await apiRequest<{ data: MessagePin }>(
+            `/api/v1/messages/${message.id}/pin`,
+            { method: 'POST' },
+        );
+
+        const others = pinsFor(message.conversation_id).filter(
+            (pin) => pin.message.id !== message.id,
+        );
+
+        pins.value = {
+            ...pins.value,
+            [message.conversation_id]: [response.data, ...others],
+        };
+    }
+
+    async function unpinMessage(message: ChatMessage): Promise<void> {
+        await apiRequest<void>(`/api/v1/messages/${message.id}/pin`, {
+            method: 'DELETE',
+        });
+
+        pins.value = {
+            ...pins.value,
+            [message.conversation_id]: pinsFor(message.conversation_id).filter(
+                (pin) => pin.message.id !== message.id,
+            ),
+        };
+    }
+
+    /**
+     * Another member pinned something. Only refresh when this client already
+     * has the list loaded, so an idle tab never fetches pins it does not show.
+     */
+    function invalidatePins(conversationId: string): void {
+        if (pins.value[conversationId] === undefined) {
+            return;
+        }
+
+        void fetchPins(conversationId);
+    }
+
+    async function fetchInvites(conversationId: string): Promise<void> {
+        loadingInvites.value = true;
+
+        try {
+            const response = await apiRequest<{ data: ConversationInvite[] }>(
+                `/api/v1/groups/${conversationId}/invites`,
+            );
+
+            invites.value = {
+                ...invites.value,
+                [conversationId]: response.data,
+            };
+        } catch (requestError) {
+            error.value = errorMessage(requestError);
+        } finally {
+            loadingInvites.value = false;
+        }
+    }
+
+    async function createInvite(
+        conversationId: string,
+        input: { expiresAt?: string | null; maxUses?: number | null } = {},
+    ): Promise<ConversationInvite> {
+        const response = await apiRequest<{ data: ConversationInvite }>(
+            `/api/v1/groups/${conversationId}/invites`,
+            {
+                method: 'POST',
+                body: {
+                    expires_at: input.expiresAt ?? null,
+                    max_uses: input.maxUses ?? null,
+                },
+            },
+        );
+
+        invites.value = {
+            ...invites.value,
+            [conversationId]: [
+                response.data,
+                ...(invites.value[conversationId] ?? []),
+            ],
+        };
+
+        return response.data;
+    }
+
+    async function revokeInvite(
+        conversationId: string,
+        inviteId: string,
+    ): Promise<void> {
+        await apiRequest<void>(
+            `/api/v1/groups/${conversationId}/invites/${inviteId}`,
+            { method: 'DELETE' },
+        );
+
+        invites.value = {
+            ...invites.value,
+            [conversationId]: (invites.value[conversationId] ?? []).filter(
+                (invite) => invite.id !== inviteId,
+            ),
+        };
+    }
+
     function setReplyTo(message: ChatMessage | null): void {
         replyTo.value = message;
     }
@@ -753,6 +1167,10 @@ export const useChatStore = defineStore('chat', () => {
         hasMore,
         nextCursor,
         replyTo,
+        pins,
+        loadingPins,
+        invites,
+        loadingInvites,
         loadingConversations,
         loadingMessages,
         loadingMore,
@@ -761,6 +1179,7 @@ export const useChatStore = defineStore('chat', () => {
         error,
         initialize,
         fetchConversations,
+        refreshConversation,
         selectConversation,
         closeConversation,
         loadOlder,
@@ -771,9 +1190,31 @@ export const useChatStore = defineStore('chat', () => {
         editMessage,
         deleteMessage,
         openDirect,
+        createGroup,
+        updateGroup,
+        addGroupMembers,
+        removeGroupMember,
+        changeGroupMemberRole,
+        leaveGroup,
+        setMuted,
+        setArchived,
+        fetchPins,
+        pinMessage,
+        unpinMessage,
+        invalidatePins,
+        pinsFor,
+        isPinned,
+        fetchInvites,
+        createInvite,
+        revokeInvite,
+        canManageGroup,
+        canAssignRoles,
+        canPin,
         setReplyTo,
         setMessageStatus,
         upsertConversation,
+        mergeConversation,
+        removeConversation,
         upsertMessage,
         applyRealtimeMessage,
         applyReceipt,

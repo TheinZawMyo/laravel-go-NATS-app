@@ -15,14 +15,16 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property string $id
  * @property ConversationType $type
  * @property string|null $title
+ * @property string|null $description
  * @property string|null $avatar_key
  * @property string $created_by
  * @property string|null $direct_pair_key
  * @property string|null $last_message_id
  * @property int $next_message_seq
+ * @property bool $history_visible_to_new_members
  * @property-read Message|null $lastMessage
  */
-#[Fillable(['type', 'title', 'avatar_key', 'created_by', 'direct_pair_key', 'last_message_id', 'next_message_seq'])]
+#[Fillable(['type', 'title', 'description', 'avatar_key', 'created_by', 'direct_pair_key', 'last_message_id', 'next_message_seq', 'history_visible_to_new_members'])]
 class Conversation extends Model
 {
     use HasUuids;
@@ -35,7 +37,24 @@ class Conversation extends Model
         return [
             'type' => ConversationType::class,
             'next_message_seq' => 'integer',
+            'history_visible_to_new_members' => 'boolean',
         ];
+    }
+
+    /**
+     * Whether new (and returning) members can read messages sent before they
+     * joined the group.
+     */
+    public function sharesHistoryWithNewMembers(): bool
+    {
+        // A freshly created model does not hydrate database defaults, so treat a
+        // missing value as the column default (visible).
+        return (bool) ($this->history_visible_to_new_members ?? true);
+    }
+
+    public function isGroup(): bool
+    {
+        return $this->type === ConversationType::Group;
     }
 
     /**
@@ -56,7 +75,7 @@ class Conversation extends Model
     {
         return $this->belongsToMany(User::class, 'conversation_members')
             ->using(ConversationMember::class)
-            ->withPivot(['role', 'joined_at', 'left_at', 'last_read_seq', 'muted_until', 'archived_at'])
+            ->withPivot(['role', 'joined_at', 'left_at', 'last_read_seq', 'history_from_seq', 'muted_until', 'archived_at'])
             ->withTimestamps();
     }
 
@@ -74,6 +93,14 @@ class Conversation extends Model
     public function lastMessage(): BelongsTo
     {
         return $this->belongsTo(Message::class, 'last_message_id');
+    }
+
+    /**
+     * @return HasMany<ConversationInvite, $this>
+     */
+    public function invites(): HasMany
+    {
+        return $this->hasMany(ConversationInvite::class);
     }
 
     /**

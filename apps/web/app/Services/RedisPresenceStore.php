@@ -3,7 +3,7 @@
 namespace App\Services;
 
 use Carbon\CarbonImmutable;
-use Illuminate\Redis\Connections\Connection;
+use Illuminate\Redis\Connections\PhpRedisConnection;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -22,7 +22,7 @@ class RedisPresenceStore implements PresenceStore
 
     public const LAST_SEEN_KEY = 'presence:lastseen:';
 
-    public function __construct(private readonly Connection $connection) {}
+    public function __construct(private readonly PhpRedisConnection $connection) {}
 
     public function snapshot(array $userIds): array
     {
@@ -49,6 +49,11 @@ class RedisPresenceStore implements PresenceStore
             return $presence;
         }
 
+        // A callback pipeline resolves to the list of command replies.
+        if (! is_array($results)) {
+            return $presence;
+        }
+
         foreach (array_values($userIds) as $index => $userId) {
             $presence[$userId] = [
                 'online' => (int) ($results[$index * 2] ?? 0) > 0,
@@ -67,7 +72,7 @@ class RedisPresenceStore implements PresenceStore
     {
         return array_values(array_unique(array_filter(
             $userIds,
-            fn (mixed $userId): bool => is_string($userId) && $userId !== '',
+            fn (string $userId): bool => $userId !== '',
         )));
     }
 

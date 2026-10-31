@@ -26,6 +26,7 @@ class MessageController extends Controller
         $limit = $request->validated('limit');
 
         [$page, $hasMore, $nextCursor] = $messages->history(
+            $request->user(),
             $conversation,
             $beforeSeq !== null ? (int) $beforeSeq : null,
             $limit !== null ? (int) $limit : MessageService::DEFAULT_LIMIT,

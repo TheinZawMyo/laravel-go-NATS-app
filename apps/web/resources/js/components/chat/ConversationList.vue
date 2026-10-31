@@ -2,7 +2,9 @@
 import { computed, ref } from 'vue';
 import { Bell, BellOff, MessagesSquare, Search } from '@lucide/vue';
 import ConnectionStatus from '@/components/chat/ConnectionStatus.vue';
+import CreateGroupDialog from '@/components/chat/CreateGroupDialog.vue';
 import NewConversationDialog from '@/components/chat/NewConversationDialog.vue';
+import PeopleDialog from '@/components/chat/PeopleDialog.vue';
 import PresenceDot from '@/components/chat/PresenceDot.vue';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -35,7 +37,7 @@ const { getInitials } = useInitials();
 const now = useNow();
 
 const search = ref('');
-const filter = ref<'all' | 'unread'>('all');
+const filter = ref<'all' | 'unread' | 'archived'>('all');
 const notifications = ref<NotificationState>(notificationState());
 
 async function toggleNotifications(): Promise<void> {
@@ -45,14 +47,33 @@ async function toggleNotifications(): Promise<void> {
 const unreadConversationCount = computed(
     () =>
         chat.conversations.filter(
-            (conversation) => conversation.unread_count > 0,
+            (conversation) =>
+                conversation.unread_count > 0 && !conversation.archived,
         ).length,
+);
+
+const archivedCount = computed(
+    () =>
+        chat.conversations.filter((conversation) => conversation.archived)
+            .length,
+);
+
+/**
+ * Archived conversations are hidden from the default list and live behind their
+ * own filter, which mirrors what archiving means in every other chat client.
+ */
+const visibleConversations = computed(() =>
+    chat.conversations.filter((conversation) =>
+        filter.value === 'archived'
+            ? conversation.archived
+            : !conversation.archived,
+    ),
 );
 
 const filteredConversations = computed(() => {
     const term = search.value.trim().toLowerCase();
 
-    return chat.conversations.filter((conversation) => {
+    return visibleConversations.value.filter((conversation) => {
         if (filter.value === 'unread' && conversation.unread_count === 0) {
             return false;
         }
@@ -104,6 +125,15 @@ function isOnline(conversation: Conversation): boolean {
     return conversation.participant?.online === true;
 }
 
+/** Groups carry their own avatar; direct chats use the other participant's. */
+function avatarUrl(conversation: Conversation): string | null {
+    return conversation.participant?.avatar_url ?? conversation.avatar_url;
+}
+
+function showsPresence(conversation: Conversation): boolean {
+    return conversation.type === 'direct';
+}
+
 function open(conversation: Conversation): void {
     void chat.selectConversation(conversation.id);
 }
@@ -153,13 +183,13 @@ function open(conversation: Conversation): void {
                 </div>
             </div>
             <div class="flex shrink-0 items-center gap-2">
-                <ConnectionStatus />
+                <ConnectionStatus class="hidden sm:inline-flex" />
                 <Button
                     v-if="notifications !== 'unsupported'"
                     type="button"
                     variant="ghost"
                     size="icon"
-                    class="text-muted-foreground hover:text-chat-accent"
+                    class="hidden text-muted-foreground hover:text-chat-accent sm:inline-flex"
                     :aria-pressed="notifications === 'granted'"
                     :disabled="notifications === 'denied'"
                     :aria-label="
@@ -179,6 +209,8 @@ function open(conversation: Conversation): void {
                     <Bell v-if="notifications === 'granted'" />
                     <BellOff v-else />
                 </Button>
+                <PeopleDialog />
+                <CreateGroupDialog />
                 <NewConversationDialog />
             </div>
         </header>
@@ -235,6 +267,30 @@ function open(conversation: Conversation): void {
                     {{ unreadConversationCount }}
                 </span>
             </button>
+            <button
+                type="button"
+                class="rounded-full px-4 py-2 text-xs font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-chat-accent focus-visible:outline-none"
+                :class="
+                    filter === 'archived'
+                        ? 'bg-chat-accent text-white shadow-sm'
+                        : 'bg-muted/70 text-muted-foreground hover:bg-muted hover:text-foreground'
+                "
+                :aria-pressed="filter === 'archived'"
+                @click="filter = 'archived'"
+            >
+                Archived
+                <span
+                    v-if="archivedCount > 0"
+                    class="ml-1 rounded-full px-1.5 py-0.5 text-[10px] leading-none"
+                    :class="
+                        filter === 'archived'
+                            ? 'bg-white/20 text-white'
+                            : 'bg-background text-muted-foreground'
+                    "
+                >
+                    {{ archivedCount }}
+                </span>
+            </button>
         </div>
 
         <div class="min-h-0 flex-1 overflow-y-auto px-2 pt-1 pb-4 sm:px-3">
@@ -273,16 +329,20 @@ function open(conversation: Conversation): void {
                                 ? 'No conversations yet'
                                 : filter === 'unread' && search === ''
                                   ? 'Nothing unread'
-                                  : 'No matches'
+                                  : filter === 'archived' && search === ''
+                                    ? 'No archived chats'
+                                    : 'No matches'
                         }}
                     </p>
                     <p class="mt-1 text-xs text-muted-foreground">
                         {{
                             search === '' && filter === 'all'
-                                ? 'Start a direct chat by username.'
+                                ? 'Start a direct chat, or add contacts to find people faster.'
                                 : filter === 'unread' && search === ''
                                   ? 'You’re all caught up.'
-                                  : 'Try a different name or username.'
+                                  : filter === 'archived' && search === ''
+                                    ? 'Archived conversations show up here.'
+                                    : 'Try a different name or username.'
                         }}
                     </p>
                 </div>
@@ -314,8 +374,8 @@ function open(conversation: Conversation): void {
                                 class="size-14 ring-1 ring-black/5 dark:ring-white/10"
                             >
                                 <AvatarImage
-                                    v-if="conversation.participant?.avatar_url"
-                                    :src="conversation.participant.avatar_url"
+                                    v-if="avatarUrl(conversation) !== null"
+                                    :src="avatarUrl(conversation) ?? ''"
                                     :alt="conversationTitle(conversation)"
                                 />
                                 <AvatarFallback>
@@ -323,6 +383,7 @@ function open(conversation: Conversation): void {
                                 </AvatarFallback>
                             </Avatar>
                             <PresenceDot
+                                v-if="showsPresence(conversation)"
                                 :online="isOnline(conversation)"
                                 :name="conversationTitle(conversation)"
                                 :border-class="
@@ -348,6 +409,17 @@ function open(conversation: Conversation): void {
                                 >
                                     {{ conversationTitle(conversation) }}
                                 </span>
+                                <BellOff
+                                    v-if="conversation.is_muted"
+                                    class="size-3 shrink-0"
+                                    :class="
+                                        chat.activeConversationId ===
+                                        conversation.id
+                                            ? 'text-white/70'
+                                            : 'text-muted-foreground'
+                                    "
+                                    aria-label="Notifications muted"
+                                />
                                 <span
                                     class="shrink-0 text-[11px]"
                                     :class="

@@ -80,6 +80,46 @@ class User extends Authenticatable implements MustVerifyEmail, PasskeyUser
         return $this->hasMany(UserDevice::class);
     }
 
+    /**
+     * @return HasMany<Contact, $this>
+     */
+    public function contacts(): HasMany
+    {
+        return $this->hasMany(Contact::class);
+    }
+
+    /**
+     * @return HasMany<ContactRequest, $this>
+     */
+    public function contactRequestsSent(): HasMany
+    {
+        return $this->hasMany(ContactRequest::class, 'sender_id');
+    }
+
+    /**
+     * @return HasMany<ContactRequest, $this>
+     */
+    public function contactRequestsReceived(): HasMany
+    {
+        return $this->hasMany(ContactRequest::class, 'receiver_id');
+    }
+
+    /**
+     * @return HasMany<UserBlock, $this>
+     */
+    public function blocks(): HasMany
+    {
+        return $this->hasMany(UserBlock::class, 'blocker_id');
+    }
+
+    /**
+     * @return HasMany<UserBlock, $this>
+     */
+    public function blockedBy(): HasMany
+    {
+        return $this->hasMany(UserBlock::class, 'blocked_id');
+    }
+
     public function isActive(): bool
     {
         return $this->status === AccountStatus::Active;

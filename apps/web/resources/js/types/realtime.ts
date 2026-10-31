@@ -1,3 +1,5 @@
+import type { ContactRequest } from './chat';
+
 export type RealtimeEventType =
     | 'connection.ready'
     | 'connection.error'
@@ -6,11 +8,18 @@ export type RealtimeEventType =
     | 'message.updated'
     | 'message.deleted'
     | 'message.reaction.updated'
+    | 'message.pinned'
+    | 'message.unpinned'
     | 'receipt.updated'
     | 'typing.updated'
     | 'presence.updated'
     | 'conversation.updated'
+    | 'conversation.removed'
     | 'conversation.subscribed'
+    | 'contact.request.created'
+    | 'contact.request.updated'
+    | 'contact.updated'
+    | 'block.updated'
     | 'sync.required';
 
 export type RealtimeEnvelope<T = unknown> = {
@@ -73,6 +82,39 @@ export type SyncRequiredEventData = {
     latest_seq: number;
     reason: string;
 };
+
+/**
+ * Conversation metadata frames never carry the conversation itself: read
+ * cursors and unread counts are per viewer, so the payload only says what
+ * changed and the client refetches over HTTP.
+ */
+export type ConversationChangedEventData = {
+    conversation_id: string;
+    reason: string;
+};
+
+export type ConversationRemovedEventData = {
+    conversation_id: string;
+};
+
+export type MessagePinnedEventData = {
+    conversation_id: string;
+    message_id: string;
+    pinned_by: string;
+};
+
+export type ContactUpdatedEventData = {
+    user_id: string;
+    contact_id: string;
+};
+
+export type BlockUpdatedEventData = {
+    user_id: string;
+    blocked_user_id: string;
+    blocked: boolean;
+};
+
+export type ContactRequestEventData = ContactRequest;
 
 export type GatewayCredentials = {
     token: string;

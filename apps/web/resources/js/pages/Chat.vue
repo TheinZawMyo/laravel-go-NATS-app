@@ -3,9 +3,12 @@ import { Head } from '@inertiajs/vue3';
 import { ChevronLeft, MessagesSquare, RefreshCw } from '@lucide/vue';
 import { computed, onBeforeUnmount, onMounted, watch } from 'vue';
 import ConnectionStatus from '@/components/chat/ConnectionStatus.vue';
+import ConversationActionsMenu from '@/components/chat/ConversationActionsMenu.vue';
 import ConversationList from '@/components/chat/ConversationList.vue';
+import GroupInfoDialog from '@/components/chat/GroupInfoDialog.vue';
 import MessageComposer from '@/components/chat/MessageComposer.vue';
 import MessageTimeline from '@/components/chat/MessageTimeline.vue';
+import PinnedMessagesDialog from '@/components/chat/PinnedMessagesDialog.vue';
 import PresenceDot from '@/components/chat/PresenceDot.vue';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -15,6 +18,7 @@ import { useNow } from '@/composables/useNow';
 import { useAuth } from '@/composables/useAuth';
 import { conversationTitle, formatPresence } from '@/lib/format';
 import { useChatStore } from '@/stores/chat';
+import { useContactsStore } from '@/stores/contacts';
 import { useRealtimeStore } from '@/stores/realtime';
 import type { ChatPageProps } from '@/types';
 
@@ -23,6 +27,7 @@ const props = defineProps<ChatPageProps>();
 useAuth();
 
 const chat = useChatStore();
+const contacts = useContactsStore();
 const realtime = useRealtimeStore();
 const { getInitials } = useInitials();
 const now = useNow();
@@ -41,7 +46,13 @@ watch(
     { immediate: true },
 );
 
-onMounted(() => realtime.start());
+onMounted(() => {
+    realtime.start();
+
+    // The address book powers the people panel, the group member picker and the
+    // pending-request badge, so it is loaded once per chat session.
+    void contacts.fetchAll();
+});
 onBeforeUnmount(() => realtime.stop());
 
 const title = computed(() => conversationTitle(chat.activeConversation));
@@ -67,6 +78,13 @@ const typingLabel = computed(() => {
 
 const participant = computed(
     () => chat.activeConversation?.participant ?? null,
+);
+/** Groups carry their own avatar; direct chats use the other participant's. */
+const activeAvatar = computed(
+    () =>
+        chat.activeConversation?.participant?.avatar_url ??
+        chat.activeConversation?.avatar_url ??
+        null,
 );
 const participantOnline = computed(() => participant.value?.online === true);
 const presenceLabel = computed(() =>
@@ -107,14 +125,8 @@ const presenceLabel = computed(() =>
                     <div class="relative shrink-0">
                         <Avatar class="size-10 ring-1 ring-border/70">
                             <AvatarImage
-                                v-if="
-                                    chat.activeConversation.participant
-                                        ?.avatar_url
-                                "
-                                :src="
-                                    chat.activeConversation.participant
-                                        .avatar_url
-                                "
+                                v-if="activeAvatar !== null"
+                                :src="activeAvatar"
                                 :alt="title"
                             />
                             <AvatarFallback>{{
@@ -158,6 +170,12 @@ const presenceLabel = computed(() =>
                     </div>
 
                     <ConnectionStatus />
+
+                    <PinnedMessagesDialog />
+
+                    <GroupInfoDialog />
+
+                    <ConversationActionsMenu />
 
                     <Button
                         type="button"

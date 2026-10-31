@@ -6,6 +6,7 @@ use App\Services\NullPresenceStore;
 use App\Services\PresenceStore;
 use App\Services\RedisPresenceStore;
 use Carbon\CarbonImmutable;
+use Illuminate\Redis\Connections\PhpRedisConnection;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redis;
@@ -26,9 +27,15 @@ class AppServiceProvider extends ServiceProvider
             }
 
             try {
-                return new RedisPresenceStore(
-                    Redis::connection((string) config('chat.presence.connection')),
-                );
+                $connection = Redis::connection((string) config('chat.presence.connection'));
+
+                // The lease store pipelines commands, which is only exposed by
+                // the phpredis connection in this application.
+                if (! $connection instanceof PhpRedisConnection) {
+                    return new NullPresenceStore;
+                }
+
+                return new RedisPresenceStore($connection);
             } catch (Throwable) {
                 // Presence is decoration: a missing Redis must not take the
                 // REST API down with it.

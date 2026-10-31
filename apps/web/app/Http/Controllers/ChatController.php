@@ -33,6 +33,7 @@ class ChatController extends Controller
             $activeConversation = $conversations->prepareForViewer($user, $conversation);
 
             [$activeMessages, $activeHasMore, $activeNextCursor] = $messages->history(
+                $user,
                 $conversation,
                 null,
                 MessageService::DEFAULT_LIMIT,

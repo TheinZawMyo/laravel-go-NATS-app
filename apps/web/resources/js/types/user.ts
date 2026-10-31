@@ -1,3 +1,13 @@
+/**
+ * How the signed in user relates to another account. Only user search fills
+ * this in, which is why it stays optional on the shared representation.
+ */
+export type UserRelationship =
+    | 'none'
+    | 'contact'
+    | 'request_sent'
+    | 'request_received';
+
 export type PublicUser = {
     id: string;
     name: string;
@@ -7,6 +17,7 @@ export type PublicUser = {
     status_text: string | null;
     last_seen_at: string | null;
     online?: boolean;
+    relationship?: UserRelationship;
 };
 
 export type UserDevice = {

@@ -30,4 +30,13 @@ class UserPolicy
     {
         return $actor->id === $user->id;
     }
+
+    /**
+     * Blocking is always allowed except against yourself; the ContactService
+     * owns the rest of the rules (idempotency, contact removal).
+     */
+    public function block(User $actor, User $user): bool
+    {
+        return $actor->id !== $user->id;
+    }
 }
