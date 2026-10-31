@@ -65,6 +65,12 @@ type RealtimeClientOptions = {
     dedupeLimit?: number;
     random?: () => number;
     getToken?: () => Promise<GatewayCredentials>;
+    /**
+     * Highest conversation sequence the client has already applied. It is sent
+     * as `last_seq` when subscribing so the gateway can answer with
+     * `sync.required` when events were missed while offline.
+     */
+    getLastSeq?: (conversationId: string) => number | null;
     WebSocketImpl?: typeof WebSocket;
 };
 
@@ -595,10 +601,21 @@ export class RealtimeClient {
             return;
         }
 
-        this.send({
-            type,
-            data: { conversation_id: conversationId },
-        });
+        const data: { conversation_id: string; last_seq?: number } = {
+            conversation_id: conversationId,
+        };
+
+        // Sending the cursor on resume lets the gateway decide whether the
+        // subscription is current or the client must refetch over HTTP.
+        if (type === 'conversation.subscribe') {
+            const lastSeq = this.options.getLastSeq?.(conversationId) ?? null;
+
+            if (lastSeq !== null && lastSeq > 0) {
+                data.last_seq = lastSeq;
+            }
+        }
+
+        this.send({ type, data });
     }
 
     private send(message: ClientMessage): void {

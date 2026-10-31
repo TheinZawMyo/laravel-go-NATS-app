@@ -6,12 +6,14 @@ import ConnectionStatus from '@/components/chat/ConnectionStatus.vue';
 import ConversationList from '@/components/chat/ConversationList.vue';
 import MessageComposer from '@/components/chat/MessageComposer.vue';
 import MessageTimeline from '@/components/chat/MessageTimeline.vue';
+import PresenceDot from '@/components/chat/PresenceDot.vue';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { useInitials } from '@/composables/useInitials';
+import { useNow } from '@/composables/useNow';
 import { useAuth } from '@/composables/useAuth';
-import { conversationTitle } from '@/lib/format';
+import { conversationTitle, formatPresence } from '@/lib/format';
 import { useChatStore } from '@/stores/chat';
 import { useRealtimeStore } from '@/stores/realtime';
 import type { ChatPageProps } from '@/types';
@@ -23,6 +25,7 @@ useAuth();
 const chat = useChatStore();
 const realtime = useRealtimeStore();
 const { getInitials } = useInitials();
+const now = useNow();
 
 chat.initialize({
     conversations: props.conversations,
@@ -61,6 +64,14 @@ const typingLabel = computed(() => {
 
     return `${typingUsers.value.length} people are typing…`;
 });
+
+const participant = computed(
+    () => chat.activeConversation?.participant ?? null,
+);
+const participantOnline = computed(() => participant.value?.online === true);
+const presenceLabel = computed(() =>
+    formatPresence(participant.value, now.value),
+);
 </script>
 
 <template>
@@ -93,20 +104,30 @@ const typingLabel = computed(() => {
                         <ChevronLeft />
                     </Button>
 
-                    <Avatar class="size-10 shrink-0 ring-1 ring-border/70">
-                        <AvatarImage
-                            v-if="
-                                chat.activeConversation.participant?.avatar_url
-                            "
-                            :src="
-                                chat.activeConversation.participant.avatar_url
-                            "
-                            :alt="title"
+                    <div class="relative shrink-0">
+                        <Avatar class="size-10 ring-1 ring-border/70">
+                            <AvatarImage
+                                v-if="
+                                    chat.activeConversation.participant
+                                        ?.avatar_url
+                                "
+                                :src="
+                                    chat.activeConversation.participant
+                                        .avatar_url
+                                "
+                                :alt="title"
+                            />
+                            <AvatarFallback>{{
+                                getInitials(title)
+                            }}</AvatarFallback>
+                        </Avatar>
+                        <PresenceDot
+                            v-if="participant !== null"
+                            :online="participantOnline"
+                            :name="title"
+                            size-class="size-3"
                         />
-                        <AvatarFallback>{{
-                            getInitials(title)
-                        }}</AvatarFallback>
-                    </Avatar>
+                    </div>
 
                     <div class="min-w-0 flex-1">
                         <p
@@ -121,12 +142,18 @@ const typingLabel = computed(() => {
                             {{ typingLabel }}
                         </p>
                         <p
-                            v-else-if="
-                                chat.activeConversation.participant !== null
+                            v-else-if="participant !== null"
+                            class="truncate text-xs"
+                            :class="
+                                participantOnline
+                                    ? 'font-medium text-emerald-600 dark:text-emerald-400'
+                                    : 'text-muted-foreground'
                             "
-                            class="truncate text-xs text-muted-foreground"
                         >
-                            @{{ chat.activeConversation.participant.username }}
+                            @{{ participant.username }}
+                            <template v-if="presenceLabel !== null">
+                                · {{ presenceLabel }}
+                            </template>
                         </p>
                     </div>
 

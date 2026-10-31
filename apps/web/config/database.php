@@ -179,6 +179,24 @@ return [
             'backoff_cap' => env('REDIS_BACKOFF_CAP', 1000),
         ],
 
+        /*
+        | The gateway writes presence leases to the same database as its own
+        | REDIS_URL and without a key prefix, so this connection must not add
+        | the application prefix.
+        */
+        'presence' => [
+            'url' => env('REDIS_URL'),
+            'host' => env('REDIS_HOST', '127.0.0.1'),
+            'username' => env('REDIS_USERNAME'),
+            'password' => env('REDIS_PASSWORD'),
+            'port' => env('REDIS_PORT', '6379'),
+            'database' => env('REDIS_PRESENCE_DB', '0'),
+            'max_retries' => env('REDIS_MAX_RETRIES', 1),
+            'options' => [
+                'prefix' => (string) env('REDIS_PRESENCE_PREFIX', ''),
+            ],
+        ],
+
     ],
 
 ];

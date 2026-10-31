@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Enums\ConversationRole;
 use App\Enums\ConversationType;
 use App\Models\Conversation;
+use App\Models\Message;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -15,6 +16,11 @@ use Illuminate\Validation\ValidationException;
 
 class ConversationService
 {
+    public function __construct(
+        private readonly RealtimeEventPublisher $events,
+        private readonly PresenceService $presence,
+    ) {}
+
     /**
      * Open the direct conversation between two users, creating it once.
      */
@@ -98,6 +104,10 @@ class ConversationService
 
         $unreadCounts = $this->unreadCountsFor($user, $conversations->pluck('id'));
 
+        $this->presence->annotate($conversations->flatMap(
+            fn (Conversation $conversation): Collection => $conversation->members,
+        ));
+
         return $conversations->each(
             fn (Conversation $conversation): Conversation => $this->applyViewerState(
                 $conversation,
@@ -113,6 +123,8 @@ class ConversationService
 
         $unreadCounts = $this->unreadCountsFor($user, collect([$conversation->id]));
 
+        $this->presence->annotate($conversation->members);
+
         return $this->applyViewerState(
             $conversation,
             $user,
@@ -122,27 +134,65 @@ class ConversationService
 
     /**
      * Advance a membership's read cursor without allowing it to move backwards.
+     *
+     * The cursor is the authoritative read state; the realtime event is only
+     * published when the cursor actually moved, so replays and stale clients
+     * cannot fan out duplicate receipts.
      */
     public function markRead(User $user, Conversation $conversation, int $seq): int
     {
         $seq = max(0, min($seq, (int) $conversation->next_message_seq));
 
-        DB::table('conversation_members')
-            ->where('conversation_id', $conversation->id)
-            ->where('user_id', $user->id)
-            ->whereNull('left_at')
-            ->where('last_read_seq', '<', $seq)
-            ->update([
-                'last_read_seq' => $seq,
-                'updated_at' => Carbon::now(),
-            ]);
+        return DB::transaction(function () use ($user, $conversation, $seq): int {
+            $advanced = DB::table('conversation_members')
+                ->where('conversation_id', $conversation->id)
+                ->where('user_id', $user->id)
+                ->whereNull('left_at')
+                ->where('last_read_seq', '<', $seq)
+                ->update([
+                    'last_read_seq' => $seq,
+                    'updated_at' => Carbon::now(),
+                ]);
 
-        $lastReadSeq = DB::table('conversation_members')
-            ->where('conversation_id', $conversation->id)
-            ->where('user_id', $user->id)
-            ->value('last_read_seq');
+            $lastReadSeq = (int) DB::table('conversation_members')
+                ->where('conversation_id', $conversation->id)
+                ->where('user_id', $user->id)
+                ->value('last_read_seq');
 
-        return (int) $lastReadSeq;
+            if ($advanced > 0 && $lastReadSeq > 0) {
+                $this->publishReadReceipt($user, $conversation, $lastReadSeq);
+            }
+
+            return $lastReadSeq;
+        });
+    }
+
+    /**
+     * Queue the receipt other members render as "read up to seq".
+     *
+     * The message id is best effort: a cursor can advance past a message that
+     * was deleted, and the sequence remains the authoritative marker.
+     */
+    private function publishReadReceipt(User $user, Conversation $conversation, int $seq): void
+    {
+        $messageId = Message::query()
+            ->withTrashed()
+            ->where('conversation_id', $conversation->id)
+            ->where('seq', $seq)
+            ->value('id');
+
+        $this->events->publishConversationEvent(
+            'receipt.updated',
+            (string) $conversation->id,
+            $seq,
+            [
+                'conversation_id' => (string) $conversation->id,
+                'user_id' => (string) $user->id,
+                'message_id' => is_string($messageId) ? $messageId : '',
+                'seq' => $seq,
+                'read' => true,
+            ],
+        );
     }
 
     /**

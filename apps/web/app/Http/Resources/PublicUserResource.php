@@ -23,7 +23,10 @@ class PublicUserResource extends JsonResource
             'avatar_url' => $this->avatar_url,
             'bio' => $this->bio,
             'status_text' => $this->status_text,
-            'last_seen_at' => $this->last_seen_at,
+            // Presence comes from the gateway's connection leases; the column
+            // is the fallback for users that have no live lease.
+            'online' => (bool) ($this->is_online ?? false),
+            'last_seen_at' => $this->presence_last_seen_at ?? $this->last_seen_at,
         ];
     }
 }

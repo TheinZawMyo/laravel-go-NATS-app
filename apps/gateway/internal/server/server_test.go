@@ -59,6 +59,12 @@ func testConfig() config.Config {
 		InboundBurst:          1000,
 		EventSubjectPrefix:    "chat.events.",
 		TypingSubjectPrefix:   "chat.typing.",
+		PresenceSubjectPrefix: "chat.presence.",
+		ReceiptSubjectPrefix:  "chat.receipts.",
+		PresenceSubjectTTL:    90 * time.Second,
+		TypingTTL:             6 * time.Second,
+		EventDedupeTTL:        time.Minute,
+		EventDedupeLimit:      1000,
 	}
 }
 
@@ -192,6 +198,49 @@ func waitForSubscription(t *testing.T, server *Server, conversationID string) {
 	t.Fatal("subscription was not registered")
 }
 
+// subscribeAndAck sends conversation.subscribe and consumes the
+// conversation.subscribed acknowledgement the gateway always replies with.
+func subscribeAndAck(t *testing.T, conn *websocket.Conn, server *Server, conversationID string, lastSeq *int64) protocol.Envelope {
+	t.Helper()
+
+	data := map[string]any{"conversation_id": conversationID}
+	if lastSeq != nil {
+		data["last_seq"] = *lastSeq
+	}
+
+	send(t, conn, map[string]any{
+		"type": protocol.ClientSubscribe,
+		"data": data,
+	})
+
+	waitForSubscription(t, server, conversationID)
+
+	envelope := readEnvelope(t, conn)
+	if envelope.Type != protocol.ServerSubscribed {
+		t.Fatalf("expected conversation.subscribed, got %s: %s", envelope.Type, envelope.Data)
+	}
+
+	return envelope
+}
+
+// consumeEnvelopeOfType reads envelopes until one matches the wanted type. It
+// keeps assertions readable when a subscription also emits presence snapshots.
+func consumeEnvelopeOfType(t *testing.T, conn *websocket.Conn, wanted string) protocol.Envelope {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		envelope := readEnvelope(t, conn)
+		if envelope.Type == wanted {
+			return envelope
+		}
+	}
+
+	t.Fatalf("no %s event received", wanted)
+
+	return protocol.Envelope{}
+}
+
 func TestConnectionAuthenticatesSubscribesAndReceivesEvents(t *testing.T) {
 	conversationID := "11111111-1111-4111-8111-111111111111"
 
@@ -212,11 +261,16 @@ func TestConnectionAuthenticatesSubscribesAndReceivesEvents(t *testing.T) {
 		t.Fatalf("unexpected ready data: %+v", readyData)
 	}
 
-	send(t, conn, map[string]any{
-		"type": protocol.ClientSubscribe,
-		"data": map[string]string{"conversation_id": conversationID},
-	})
-	waitForSubscription(t, server, conversationID)
+	acked := subscribeAndAck(t, conn, server, conversationID, nil)
+
+	var subscribedData protocol.SubscribedData
+	if err := json.Unmarshal(acked.Data, &subscribedData); err != nil {
+		t.Fatalf("decode subscribed data: %v", err)
+	}
+
+	if subscribedData.ConversationID != conversationID {
+		t.Fatalf("unexpected subscribed data: %+v", subscribedData)
+	}
 
 	envelope, err := protocol.NewEnvelope(protocol.ServerMessageCreated, &conversationID, nil, map[string]string{"message_id": "message-1"})
 	if err != nil {
@@ -492,11 +546,7 @@ func TestBrokerEventsForAnotherConversationAreDropped(t *testing.T) {
 	conn := dial(t, httpServer, "http://localhost:8000")
 	authenticate(t, conn, signToken(t, testSecret, "user-1", time.Now().Add(time.Hour)))
 
-	send(t, conn, map[string]any{
-		"type": protocol.ClientSubscribe,
-		"data": map[string]string{"conversation_id": conversationID},
-	})
-	waitForSubscription(t, server, conversationID)
+	subscribeAndAck(t, conn, server, conversationID, nil)
 
 	// Payload targeting another conversation on this conversation's subject.
 	server.handleBrokerMessage(
@@ -532,7 +582,7 @@ func TestBrokerEventsForAnotherConversationAreDropped(t *testing.T) {
 func TestReceiptsRequireValidIdentifiers(t *testing.T) {
 	conversationID := "11111111-1111-4111-8111-111111111111"
 
-	_, httpServer := testServer(t, &fakeAuthorizer{
+	server, httpServer := testServer(t, &fakeAuthorizer{
 		active: true,
 		access: map[string]bool{conversationID: true},
 	})
@@ -540,10 +590,7 @@ func TestReceiptsRequireValidIdentifiers(t *testing.T) {
 	conn := dial(t, httpServer, "http://localhost:8000")
 	authenticate(t, conn, signToken(t, testSecret, "user-1", time.Now().Add(time.Hour)))
 
-	send(t, conn, map[string]any{
-		"type": protocol.ClientSubscribe,
-		"data": map[string]string{"conversation_id": conversationID},
-	})
+	subscribeAndAck(t, conn, server, conversationID, nil)
 
 	send(t, conn, map[string]any{
 		"type": protocol.ClientReadReceipt,

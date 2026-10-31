@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import {
+    CheckCheck,
     MoreHorizontal,
     Pencil,
     Reply,
@@ -45,6 +46,31 @@ const localError = ref<string | null>(null);
 
 const isOwn = computed(() => props.message.sender.id === user.value?.id);
 const isDeleted = computed(() => props.message.deleted_at !== null);
+
+/**
+ * Direct conversations have at most two members, so "the highest cursor of
+ * everyone else" is exactly "has the other person read this?". Group receipts
+ * would need a per-member breakdown the gateway does not send yet.
+ */
+const isDirect = computed(
+    () => (chat.activeConversation?.members.length ?? 0) <= 2,
+);
+
+const readByOthers = computed(() => {
+    const conversationId = chat.activeConversationId;
+
+    if (
+        conversationId === null ||
+        !isOwn.value ||
+        !isDirect.value ||
+        props.message.status !== 'sent' ||
+        props.message.seq <= 0
+    ) {
+        return false;
+    }
+
+    return chat.othersReadSeq(conversationId) >= props.message.seq;
+});
 
 function startEditing(): void {
     draft.value = props.message.body ?? '';
@@ -218,6 +244,13 @@ async function remove(): Promise<void> {
                     <RotateCcw class="size-3" />
                     Failed to send — retry
                 </button>
+                <span
+                    v-else-if="readByOthers"
+                    class="inline-flex items-center gap-1 text-chat-accent"
+                >
+                    <CheckCheck class="size-3.5" aria-hidden="true" />
+                    Read
+                </span>
             </div>
 
             <p

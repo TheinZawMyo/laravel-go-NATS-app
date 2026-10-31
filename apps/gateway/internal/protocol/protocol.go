@@ -31,6 +31,7 @@ const (
 	ServerTypingUpdated       = "typing.updated"
 	ServerPresenceUpdated     = "presence.updated"
 	ServerConversationUpdated = "conversation.updated"
+	ServerSubscribed          = "conversation.subscribed"
 	ServerSyncRequired        = "sync.required"
 )
 
@@ -46,6 +47,9 @@ type AuthData struct {
 
 type ConversationData struct {
 	ConversationID string `json:"conversation_id"`
+	// LastSeq is the highest conversation sequence the client already applied.
+	// When it is behind the server, the gateway answers with sync.required.
+	LastSeq *int64 `json:"last_seq,omitempty"`
 }
 
 type ReceiptData struct {
@@ -87,6 +91,33 @@ type ReceiptUpdatedData struct {
 	MessageID      string `json:"message_id"`
 	Seq            int64  `json:"seq"`
 	Read           bool   `json:"read"`
+}
+
+// PresenceData is broadcast when a member of a conversation goes online or
+// offline. It is conversation-scoped so subscribers can render presence dots
+// without knowing which conversations a user belongs to.
+type PresenceData struct {
+	ConversationID string `json:"conversation_id"`
+	UserID         string `json:"user_id"`
+	Online         bool   `json:"online"`
+	LastSeenAt     string `json:"last_seen_at,omitempty"`
+}
+
+// SyncRequiredData tells a client that it missed events and must refetch the
+// conversation from the HTTP API.
+type SyncRequiredData struct {
+	ConversationID string `json:"conversation_id"`
+	LastSeq        int64  `json:"last_seq"`
+	LatestSeq      int64  `json:"latest_seq"`
+	Reason         string `json:"reason"`
+}
+
+// SubscribedData acknowledges a subscription and hands the client the cursor it
+// should send on the next reconnect.
+type SubscribedData struct {
+	ConversationID string `json:"conversation_id"`
+	LatestSeq      int64  `json:"latest_seq"`
+	LastSeq        *int64 `json:"last_seq,omitempty"`
 }
 
 type Envelope struct {

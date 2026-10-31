@@ -87,6 +87,12 @@ export const useChatStore = defineStore('chat', () => {
     const nextCursor = ref<number | null>(null);
     const replyTo = ref<ChatMessage | null>(null);
 
+    /**
+     * Highest server sequence applied per conversation. It is the cursor the
+     * realtime client sends as `last_seq` so the gateway can flag missed events.
+     */
+    const appliedSeq = ref<Record<string, number>>({});
+
     const loadingConversations = ref(false);
     const loadingMessages = ref(false);
     const loadingMore = ref(false);
@@ -96,6 +102,9 @@ export const useChatStore = defineStore('chat', () => {
 
     let selectionRequest = 0;
 
+    /** Conversations with a resync already in flight, keyed by id. */
+    const resyncing = new Set<string>();
+
     const activeConversation = computed<Conversation | null>(
         () =>
             conversations.value.find(
@@ -103,6 +112,176 @@ export const useChatStore = defineStore('chat', () => {
                     conversation.id === activeConversationId.value,
             ) ?? null,
     );
+
+    function noteAppliedSeq(conversationId: string, seq: number): void {
+        if (!Number.isFinite(seq) || seq <= 0) {
+            return;
+        }
+
+        if (seq <= (appliedSeq.value[conversationId] ?? 0)) {
+            return;
+        }
+
+        appliedSeq.value = { ...appliedSeq.value, [conversationId]: seq };
+    }
+
+    /**
+     * The highest sequence this client has rendered for a conversation. Falls
+     * back to the newest message in the summary so a freshly loaded page still
+     * resumes from a sensible cursor.
+     */
+    function lastAppliedSeq(conversationId: string): number | null {
+        const recorded = appliedSeq.value[conversationId] ?? 0;
+
+        if (recorded > 0) {
+            return recorded;
+        }
+
+        const latest =
+            conversations.value.find(
+                (conversation) => conversation.id === conversationId,
+            )?.last_message?.seq ?? 0;
+
+        return latest > 0 ? latest : null;
+    }
+
+    /**
+     * Read cursors are authoritative in Laravel. Realtime receipts only make
+     * them show up sooner, and they are applied monotonically per member.
+     */
+    function applyReceipt(
+        conversationId: string,
+        userId: string,
+        seq: number,
+    ): void {
+        if (!Number.isFinite(seq) || seq <= 0) {
+            return;
+        }
+
+        const conversation = conversations.value.find(
+            (current) => current.id === conversationId,
+        );
+
+        if (conversation !== undefined) {
+            const member = conversation.members.find(
+                (current) => current.user.id === userId,
+            );
+
+            if (member !== undefined) {
+                member.last_read_seq = Math.max(member.last_read_seq, seq);
+            }
+
+            if (userId === auth.user?.id) {
+                conversation.last_read_seq = Math.max(
+                    conversation.last_read_seq,
+                    seq,
+                );
+
+                // Another device of the same user may read an older message
+                // while newer ones are still unread, so only clear the badge
+                // once the cursor reaches the newest known message.
+                const latest = conversation.last_message?.seq ?? 0;
+
+                if (seq >= latest) {
+                    conversation.unread_count = 0;
+                }
+            }
+        }
+    }
+
+    function readSeqFor(conversationId: string, userId: string): number {
+        const member = conversations.value
+            .find((conversation) => conversation.id === conversationId)
+            ?.members.find((current) => current.user.id === userId);
+
+        return member?.last_read_seq ?? 0;
+    }
+
+    /**
+     * Highest cursor among everyone except the signed in user, which is all a
+     * direct conversation needs to decide whether a message was read.
+     */
+    function othersReadSeq(conversationId: string): number {
+        const conversation = conversations.value.find(
+            (current) => current.id === conversationId,
+        );
+
+        if (conversation === undefined) {
+            return 0;
+        }
+
+        return conversation.members
+            .filter((member) => member.user.id !== auth.user?.id)
+            .reduce(
+                (highest, member) =>
+                    Math.max(
+                        highest,
+                        readSeqFor(conversationId, member.user.id),
+                    ),
+                0,
+            );
+    }
+
+    function applyPresence(
+        conversationId: string,
+        userId: string,
+        online: boolean,
+        lastSeenAt: string | null = null,
+    ): void {
+        const conversation = conversations.value.find(
+            (current) => current.id === conversationId,
+        );
+
+        if (conversation === undefined) {
+            return;
+        }
+
+        const annotate = (candidate: PublicUser): void => {
+            if (candidate.id !== userId) {
+                return;
+            }
+
+            candidate.online = online;
+
+            if (lastSeenAt !== null) {
+                candidate.last_seen_at = lastSeenAt;
+            }
+        };
+
+        if (conversation.participant !== null) {
+            annotate(conversation.participant);
+        }
+
+        conversation.members.forEach((member) => annotate(member.user));
+    }
+
+    /**
+     * Realtime resync is a hint to refetch over HTTP; the WebSocket never
+     * replays history. Refreshing the active conversation keeps its messages,
+     * while summary refreshes cover every other conversation.
+     *
+     * The gateway acknowledges a subscription with `conversation.subscribed`
+     * and, when the cursor is behind, follows up with `sync.required`. Both
+     * arrive for the same gap, so concurrent resyncs for one conversation are
+     * collapsed into a single round trip.
+     */
+    async function syncConversation(conversationId: string): Promise<void> {
+        if (resyncing.has(conversationId)) {
+            return;
+        }
+
+        resyncing.add(conversationId);
+
+        try {
+            await fetchConversations();
+
+            if (conversationId === activeConversationId.value) {
+                await refreshMessages();
+            }
+        } finally {
+            resyncing.delete(conversationId);
+        }
+    }
 
     function initialize(payload: ChatPagePayload): void {
         conversations.value = sortConversations(payload.conversations);
@@ -130,6 +309,7 @@ export const useChatStore = defineStore('chat', () => {
         const latest = messages.value.at(-1);
 
         if (latest !== undefined) {
+            noteAppliedSeq(latest.conversation_id, latest.seq);
             void markRead(latest.seq);
         }
     }
@@ -174,6 +354,8 @@ export const useChatStore = defineStore('chat', () => {
             error: null,
         };
 
+        noteAppliedSeq(normalized.conversation_id, normalized.seq);
+
         const index = messages.value.findIndex(
             (current) =>
                 current.id === message.id ||
@@ -191,6 +373,8 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     function applyRealtimeMessage(message: ChatMessage): void {
+        noteAppliedSeq(message.conversation_id, message.seq);
+
         const conversation = conversations.value.find(
             (current) => current.id === message.conversation_id,
         );
@@ -284,6 +468,7 @@ export const useChatStore = defineStore('chat', () => {
             const latest = messages.value.at(-1);
 
             if (latest !== undefined) {
+                noteAppliedSeq(conversationId, latest.seq);
                 void markRead(latest.seq);
             }
         } catch (requestError) {
@@ -591,6 +776,11 @@ export const useChatStore = defineStore('chat', () => {
         upsertConversation,
         upsertMessage,
         applyRealtimeMessage,
+        applyReceipt,
+        applyPresence,
+        lastAppliedSeq,
+        othersReadSeq,
+        syncConversation,
         touchConversation,
     };
 });

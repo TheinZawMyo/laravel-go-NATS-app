@@ -43,8 +43,8 @@ function createConversation(
         participant: other,
         last_message: null,
         members: [
-            { role: 'member', user },
-            { role: 'member', user: other },
+            { role: 'member', last_read_seq: 0, user },
+            { role: 'member', last_read_seq: 0, user: other },
         ],
         created_at: '2026-10-29T00:00:00Z',
         updated_at: '2026-10-29T00:00:00Z',
@@ -358,6 +358,200 @@ describe('chat store', () => {
         expect(store.messages[0]?.status).toBe('sent');
         expect(store.activeConversation?.last_message?.id).toBe(
             'server-message',
+        );
+    });
+
+    it('tracks read receipts monotonically and clears the local unread count', () => {
+        const store = useChatStore();
+        const activeConversation = createConversation({ unread_count: 3 });
+
+        store.initialize({
+            conversations: [activeConversation],
+            activeConversation,
+            activeMessages: [],
+            activeHasMore: false,
+            activeNextCursor: null,
+        });
+
+        store.applyReceipt(conversation.id, other.id, 5);
+
+        expect(store.othersReadSeq(conversation.id)).toBe(5);
+
+        // Receipts are per member cursors, so a stale one cannot move backwards.
+        store.applyReceipt(conversation.id, other.id, 2);
+
+        expect(store.othersReadSeq(conversation.id)).toBe(5);
+
+        store.applyReceipt(conversation.id, user.id, 4);
+
+        expect(store.activeConversation?.last_read_seq).toBe(4);
+        expect(store.activeConversation?.unread_count).toBe(0);
+    });
+
+    it('keeps the unread badge when another device read an older message', () => {
+        const store = useChatStore();
+        const activeConversation = createConversation({
+            unread_count: 4,
+            last_message: message({ seq: 9 }),
+        });
+
+        store.initialize({
+            conversations: [activeConversation],
+            activeConversation,
+            activeMessages: [],
+            activeHasMore: false,
+            activeNextCursor: null,
+        });
+
+        store.applyReceipt(conversation.id, user.id, 4);
+
+        expect(store.activeConversation?.last_read_seq).toBe(4);
+        expect(store.activeConversation?.unread_count).toBe(4);
+    });
+
+    it('applies presence updates to the participant and members', () => {
+        const store = useChatStore();
+        const activeConversation = createConversation();
+
+        store.initialize({
+            conversations: [activeConversation],
+            activeConversation,
+            activeMessages: [],
+            activeHasMore: false,
+            activeNextCursor: null,
+        });
+
+        store.applyPresence(conversation.id, other.id, true);
+
+        expect(store.activeConversation?.participant?.online).toBe(true);
+        expect(
+            store.activeConversation?.members.find(
+                (member) => member.user.id === other.id,
+            )?.user.online,
+        ).toBe(true);
+
+        store.applyPresence(
+            conversation.id,
+            other.id,
+            false,
+            '2026-10-30T12:00:00Z',
+        );
+
+        expect(store.activeConversation?.participant?.online).toBe(false);
+        expect(store.activeConversation?.participant?.last_seen_at).toBe(
+            '2026-10-30T12:00:00Z',
+        );
+    });
+
+    it('reports the last applied sequence for gap detection', () => {
+        const store = useChatStore();
+        const activeConversation = createConversation({
+            last_message: message({ seq: 4 }),
+        });
+
+        store.initialize({
+            conversations: [activeConversation],
+            activeConversation,
+            activeMessages: [message({ seq: 4 })],
+            activeHasMore: false,
+            activeNextCursor: null,
+        });
+
+        expect(store.lastAppliedSeq(conversation.id)).toBe(4);
+        expect(store.lastAppliedSeq('conversation-unknown')).toBeNull();
+
+        store.applyRealtimeMessage(
+            message({ id: 'message-9', seq: 9, sender: other }),
+        );
+
+        expect(store.lastAppliedSeq(conversation.id)).toBe(9);
+    });
+
+    it('refetches a conversation over HTTP when a resync is required', async () => {
+        const store = useChatStore();
+        const activeConversation = createConversation();
+
+        store.initialize({
+            conversations: [activeConversation],
+            activeConversation,
+            activeMessages: [],
+            activeHasMore: false,
+            activeNextCursor: null,
+        });
+
+        fetchMock.mockReset();
+        fetchMock.mockImplementation(async (url: string) => {
+            if (url.endsWith('/messages')) {
+                return success({
+                    data: [
+                        message({ id: 'message-7', seq: 7, body: 'Missed' }),
+                    ],
+                    meta: { has_more: false, next_cursor: null },
+                });
+            }
+
+            return success({ data: [activeConversation] });
+        });
+
+        await store.syncConversation(activeConversation.id);
+
+        // A resync refetches summaries, then the visible conversation page.
+        expect(
+            fetchMock.mock.calls
+                .map(([url]) => url)
+                .filter((url) => !url.endsWith('/read')),
+        ).toEqual([
+            '/api/v1/conversations',
+            `/api/v1/conversations/${conversation.id}/messages`,
+        ]);
+        expect(store.messages.map((item) => item.seq)).toContain(7);
+    });
+
+    it('collapses concurrent resyncs for the same conversation', async () => {
+        const store = useChatStore();
+        const activeConversation = createConversation();
+
+        store.initialize({
+            conversations: [activeConversation],
+            activeConversation,
+            activeMessages: [],
+            activeHasMore: false,
+            activeNextCursor: null,
+        });
+
+        fetchMock.mockReset();
+        fetchMock.mockImplementation(async (url: string) =>
+            url.endsWith('/messages')
+                ? success({
+                      data: [],
+                      meta: { has_more: false, next_cursor: null },
+                  })
+                : success({ data: [activeConversation] }),
+        );
+
+        await Promise.all([
+            store.syncConversation(activeConversation.id),
+            store.syncConversation(activeConversation.id),
+        ]);
+
+        const urls = (): string[] => fetchMock.mock.calls.map(([url]) => url);
+
+        // One summary fetch and one message page, not two of each.
+        expect(
+            urls().filter((url) => url === '/api/v1/conversations'),
+        ).toHaveLength(1);
+        expect(urls().filter((url) => url.endsWith('/messages'))).toHaveLength(
+            1,
+        );
+
+        // Once the round trip settles, the next gap can resync again.
+        await store.syncConversation(activeConversation.id);
+
+        expect(
+            urls().filter((url) => url === '/api/v1/conversations'),
+        ).toHaveLength(2);
+        expect(urls().filter((url) => url.endsWith('/messages'))).toHaveLength(
+            2,
         );
     });
 

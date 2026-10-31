@@ -2,11 +2,16 @@
 
 namespace App\Providers;
 
+use App\Services\NullPresenceStore;
+use App\Services\PresenceStore;
+use App\Services\RedisPresenceStore;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Validation\Rules\Password;
+use Throwable;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -15,7 +20,21 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        $this->app->singleton(PresenceStore::class, function (): PresenceStore {
+            if (! config('chat.presence.enabled')) {
+                return new NullPresenceStore;
+            }
+
+            try {
+                return new RedisPresenceStore(
+                    Redis::connection((string) config('chat.presence.connection')),
+                );
+            } catch (Throwable) {
+                // Presence is decoration: a missing Redis must not take the
+                // REST API down with it.
+                return new NullPresenceStore;
+            }
+        });
     }
 
     /**

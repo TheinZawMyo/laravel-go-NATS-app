@@ -6,24 +6,97 @@ import type { ComponentPublicInstance } from 'vue';
 import MessageBubble from '@/components/chat/MessageBubble.vue';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
+import { formatMessageDay, messageDayKey } from '@/lib/format';
+import { useNow } from '@/composables/useNow';
 import { useChatStore } from '@/stores/chat';
+import type { ChatMessage } from '@/types';
 
 const chat = useChatStore();
+// Day labels must roll over at midnight even if no message arrives, so the
+// divider computation reads a clock that ticks once a minute.
+const now = useNow(60_000);
 
 const scrollElement = ref<HTMLElement | null>(null);
 const stickToBottom = ref(true);
+
+/**
+ * A flat timeline where the first message of every calendar day carries the
+ * divider label. Keeping dividers attached to a message row means the
+ * virtualizer still measures one element per row and day breaks never drift
+ * away from the messages they introduce.
+ */
+type TimelineRow = {
+    key: string;
+    message: ChatMessage;
+    dayLabel: string | null;
+};
+
+const rows = computed<TimelineRow[]>(() => {
+    const nowMs = now.value;
+    let previousDay: string | null = null;
+
+    return chat.messages.map((message) => {
+        const day = messageDayKey(message.created_at);
+        const startsDay = day !== previousDay;
+        const label = startsDay
+            ? formatMessageDay(message.created_at, nowMs)
+            : '';
+
+        previousDay = day;
+
+        return {
+            key: message.id,
+            message,
+            dayLabel: label === '' ? null : label,
+        };
+    });
+});
 
 // The virtualizer only re-reads its options when the options object identity
 // changes, so the count has to be reactive: a plain object freezes `count` at
 // mount time and messages appended later would never be rendered.
 const virtualizer = useVirtualizer(
     computed(() => ({
-        count: chat.messages.length,
+        count: rows.value.length,
         getScrollElement: () => scrollElement.value,
         estimateSize: () => 74,
         overscan: 8,
-        getItemKey: (index: number) => chat.messages[index]?.id ?? index,
+        getItemKey: (index: number) => rows.value[index]?.key ?? index,
     })),
+);
+
+/**
+ * Virtual items carry layout offsets while `rows` carries content; merging
+ * them here keeps the template free of index lookups that could be stale for
+ * one tick after the message list shrinks.
+ */
+type VisibleRow = {
+    key: string;
+    index: number;
+    start: number;
+    message: ChatMessage;
+    dayLabel: string | null;
+};
+
+const visibleRows = computed<VisibleRow[]>(() =>
+    virtualizer.value
+        .getVirtualItems()
+        .map((item): VisibleRow | null => {
+            const row = rows.value[item.index];
+
+            if (row === undefined) {
+                return null;
+            }
+
+            return {
+                key: String(item.key),
+                index: item.index,
+                start: item.start,
+                message: row.message,
+                dayLabel: row.dayLabel,
+            };
+        })
+        .filter((row): row is VisibleRow => row !== null),
 );
 
 function nearBottom(element: HTMLElement): boolean {
@@ -153,8 +226,8 @@ onMounted(() => {
                 :style="{ height: `${virtualizer.getTotalSize()}px` }"
             >
                 <div
-                    v-for="item in virtualizer.getVirtualItems()"
-                    :key="String(item.key)"
+                    v-for="item in visibleRows"
+                    :key="item.key"
                     :data-index="item.index"
                     :ref="measureElement"
                     class="absolute top-0 left-0 w-full"
@@ -162,9 +235,20 @@ onMounted(() => {
                         transform: `translateY(${item.start}px)`,
                     }"
                 >
+                    <div
+                        v-if="item.dayLabel !== null"
+                        class="flex justify-center py-3"
+                        role="separator"
+                        :aria-label="item.dayLabel"
+                    >
+                        <span
+                            class="rounded-full border border-border/60 bg-muted/80 px-3 py-1 text-[11px] font-medium tracking-wide text-muted-foreground shadow-sm backdrop-blur"
+                        >
+                            {{ item.dayLabel }}
+                        </span>
+                    </div>
                     <MessageBubble
-                        v-if="chat.messages[item.index] !== undefined"
-                        :message="chat.messages[item.index]"
+                        :message="item.message"
                         :show-sender="chat.activeConversation?.type === 'group'"
                     />
                 </div>

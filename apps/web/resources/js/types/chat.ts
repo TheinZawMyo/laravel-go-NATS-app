@@ -27,6 +27,7 @@ export type ChatMessage = {
 
 export type ConversationMember = {
     role: ConversationRole;
+    last_read_seq: number;
     user: PublicUser;
 };
 

@@ -23,7 +23,11 @@ const other = {
     last_seen_at: null,
 };
 
-function message(seq: number, body: string): ChatMessage {
+function message(seq: number, body: string, createdAt?: Date): ChatMessage {
+    const timestamp = (
+        createdAt ?? new Date('2026-10-29T00:00:00Z')
+    ).toISOString();
+
     return {
         id: `message-${seq}`,
         conversation_id: 'conversation-1',
@@ -35,11 +39,26 @@ function message(seq: number, body: string): ChatMessage {
         reply_to: null,
         edited_at: null,
         deleted_at: null,
-        created_at: '2026-10-29T00:00:00Z',
-        updated_at: '2026-10-29T00:00:00Z',
+        created_at: timestamp,
+        updated_at: timestamp,
         status: 'sent',
         error: null,
     };
+}
+
+/**
+ * Local wall clock dates keep the assertions timezone independent: the day a
+ * message lands on is what decides its divider.
+ */
+function localDay(daysAgo: number, hour: number): Date {
+    const now = new Date();
+
+    return new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() - daysAgo,
+        hour,
+    );
 }
 
 async function flush(): Promise<void> {
@@ -109,6 +128,55 @@ describe('MessageTimeline', () => {
         await flush();
 
         expect(wrapper.text()).toContain('loaded later');
+
+        wrapper.unmount();
+    });
+
+    it('adds a new divider when a message arrives on a new day', async () => {
+        const chat = useChatStore();
+
+        chat.messages = [message(1, 'last night', localDay(1, 23))];
+
+        const wrapper = mount(MessageTimeline, { attachTo: document.body });
+        await flush();
+
+        expect(wrapper.findAll('[role="separator"]')).toHaveLength(1);
+
+        chat.messages = [
+            ...chat.messages,
+            message(2, 'this morning', localDay(0, 9)),
+        ];
+        await flush();
+
+        const separators = wrapper.findAll('[role="separator"]');
+
+        expect(separators).toHaveLength(2);
+        expect(separators[0]?.text()).toBe('Yesterday');
+        expect(separators[1]?.text()).toBe('Today');
+        expect(wrapper.text()).toContain('this morning');
+
+        wrapper.unmount();
+    });
+
+    it('groups messages under one divider per calendar day', async () => {
+        const chat = useChatStore();
+
+        chat.messages = [
+            message(1, 'yesterday message', localDay(1, 18)),
+            message(2, 'today morning', localDay(0, 9)),
+            message(3, 'today evening', localDay(0, 18)),
+        ];
+
+        const wrapper = mount(MessageTimeline, { attachTo: document.body });
+        await flush();
+
+        const separators = wrapper.findAll('[role="separator"]');
+
+        expect(separators).toHaveLength(2);
+        expect(separators[0]?.text()).toBe('Yesterday');
+        expect(separators[1]?.text()).toBe('Today');
+        expect(wrapper.text()).toContain('yesterday message');
+        expect(wrapper.text()).toContain('today evening');
 
         wrapper.unmount();
     });

@@ -1,13 +1,19 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
+import { messagePreview } from '@/lib/format';
+import { showNotification } from '@/lib/notifications';
 import { RealtimeClient } from '@/lib/realtime';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
 import { useConnectionStore } from '@/stores/connection';
 import type { ChatMessage, Conversation } from '@/types';
 import type {
+    PresenceEventData,
+    ReceiptEventData,
     RealtimeEnvelope,
     RealtimeStatus,
+    SubscribedEventData,
+    SyncRequiredEventData,
     TypingEventData,
 } from '@/types/realtime';
 
@@ -42,6 +48,7 @@ export const useRealtimeStore = defineStore('realtime', () => {
             onError: (message) => connection.setError(message),
             onEvent: applyEvent,
             tokenEndpoint: '/api/v1/gateway/token',
+            getLastSeq: (conversationId) => chat.lastAppliedSeq(conversationId),
         });
 
         client.setSubscriptions(desiredSubscriptions);
@@ -149,6 +156,8 @@ export const useRealtimeStore = defineStore('realtime', () => {
     function applyEvent(envelope: RealtimeEnvelope): void {
         switch (envelope.type) {
             case 'message.created':
+                applyCreatedMessage(envelope.data as ChatMessage);
+                break;
             case 'message.updated':
             case 'message.deleted':
                 chat.applyRealtimeMessage(envelope.data as ChatMessage);
@@ -159,10 +168,94 @@ export const useRealtimeStore = defineStore('realtime', () => {
             case 'typing.updated':
                 applyTyping(envelope.data as TypingEventData);
                 break;
+            case 'receipt.updated':
+                applyReceipt(envelope.data as ReceiptEventData);
+                break;
+            case 'presence.updated':
+                applyPresence(envelope.data as PresenceEventData);
+                break;
+            case 'conversation.subscribed':
+                applySubscribed(envelope.data as SubscribedEventData);
+                break;
             case 'sync.required':
-                void reconcile();
+                applySyncRequired(envelope);
                 break;
         }
+    }
+
+    /**
+     * The gateway acknowledges every subscription with the sequence it is at.
+     * When the server is ahead of the cursor we sent, events were missed while
+     * the socket was down and the page has to refetch over HTTP.
+     */
+    function applySubscribed(data: SubscribedEventData): void {
+        const lastSeq = data.last_seq ?? null;
+
+        if (lastSeq === null || data.latest_seq <= lastSeq) {
+            return;
+        }
+
+        void chat.syncConversation(data.conversation_id);
+    }
+
+    function applySyncRequired(envelope: RealtimeEnvelope): void {
+        const data = (envelope.data as SyncRequiredEventData | null) ?? null;
+        const conversationId =
+            data?.conversation_id ?? envelope.conversation_id ?? null;
+
+        if (conversationId === null) {
+            void reconcile();
+
+            return;
+        }
+
+        void chat.syncConversation(conversationId);
+    }
+
+    function applyReceipt(data: ReceiptEventData): void {
+        chat.applyReceipt(data.conversation_id, data.user_id, data.seq);
+    }
+
+    function applyCreatedMessage(message: ChatMessage): void {
+        chat.applyRealtimeMessage(message);
+        notify(message);
+    }
+
+    /**
+     * Desktop notifications only fire for messages the user cannot already see:
+     * someone else's message, in a conversation that is not focused right now.
+     */
+    function notify(message: ChatMessage): void {
+        if (message.sender.id === auth.user?.id) {
+            return;
+        }
+
+        const viewingThisConversation =
+            message.conversation_id === chat.activeConversationId;
+
+        if (
+            viewingThisConversation &&
+            (typeof document === 'undefined' || !document.hidden)
+        ) {
+            return;
+        }
+
+        showNotification(
+            message.sender.name,
+            messagePreview(message),
+            message.conversation_id,
+        );
+    }
+
+    function applyPresence(data: PresenceEventData): void {
+        chat.applyPresence(
+            data.conversation_id,
+            data.user_id,
+            data.online,
+            data.last_seen_at !== undefined && data.last_seen_at !== ''
+                ? data.last_seen_at
+                : null,
+        );
     }
 
     function applyTyping(data: TypingEventData): void {

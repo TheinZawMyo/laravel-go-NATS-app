@@ -10,6 +10,7 @@ export type RealtimeEventType =
     | 'typing.updated'
     | 'presence.updated'
     | 'conversation.updated'
+    | 'conversation.subscribed'
     | 'sync.required';
 
 export type RealtimeEnvelope<T = unknown> = {
@@ -51,6 +52,26 @@ export type ReceiptEventData = {
     message_id: string;
     seq: number;
     read: boolean;
+};
+
+export type PresenceEventData = {
+    conversation_id: string;
+    user_id: string;
+    online: boolean;
+    last_seen_at?: string;
+};
+
+export type SubscribedEventData = {
+    conversation_id: string;
+    latest_seq: number;
+    last_seq?: number | null;
+};
+
+export type SyncRequiredEventData = {
+    conversation_id: string;
+    last_seq: number;
+    latest_seq: number;
+    reason: string;
 };
 
 export type GatewayCredentials = {

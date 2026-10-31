@@ -19,6 +19,35 @@ func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 	return &PostgresStore{pool: pool}
 }
 
+const backlogQuery = `
+	SELECT
+		COUNT(*) FILTER (WHERE last_error IS NULL)::bigint,
+		COUNT(*) FILTER (WHERE last_error IS NOT NULL)::bigint,
+		MIN(created_at) FILTER (WHERE last_error IS NULL)
+	FROM outbox_events
+	WHERE published_at IS NULL`
+
+// Backlog reports how many events are still waiting, how many are dead
+// lettered, and how old the oldest retryable event is.
+func (s *PostgresStore) Backlog(ctx context.Context) (BacklogStats, error) {
+	var (
+		stats  BacklogStats
+		oldest *time.Time
+	)
+
+	err := s.pool.QueryRow(ctx, backlogQuery).Scan(&stats.Pending, &stats.Failed, &oldest)
+	if err != nil {
+		return BacklogStats{}, fmt.Errorf("read outbox backlog: %w", err)
+	}
+
+	if oldest != nil {
+		stats.Oldest = *oldest
+		stats.HasOldest = true
+	}
+
+	return stats, nil
+}
+
 const claimQuery = `
 	SELECT id, aggregate_type, aggregate_id, event_type, payload, attempts
 	FROM outbox_events

@@ -9,16 +9,22 @@ import (
 type metrics struct {
 	registry *prometheus.Registry
 
-	connects           *prometheus.CounterVec
-	disconnects        *prometheus.CounterVec
-	authFailures       *prometheus.CounterVec
-	upgradeRejections  *prometheus.CounterVec
-	slowConsumers      prometheus.Counter
-	inboundThrottled   prometheus.Counter
-	tokenRenewals      prometheus.Counter
-	eventsDelivered    *prometheus.CounterVec
-	eventsDropped      *prometheus.CounterVec
-	subscriptionErrors *prometheus.CounterVec
+	connects            *prometheus.CounterVec
+	disconnects         *prometheus.CounterVec
+	authFailures        *prometheus.CounterVec
+	upgradeRejections   *prometheus.CounterVec
+	slowConsumers       prometheus.Counter
+	inboundThrottled    prometheus.Counter
+	tokenRenewals       prometheus.Counter
+	eventsDelivered     *prometheus.CounterVec
+	eventsDropped       *prometheus.CounterVec
+	subscriptionErrors  *prometheus.CounterVec
+	duplicateEvents     prometheus.Counter
+	presenceTransitions *prometheus.CounterVec
+	presenceErrors      prometheus.Counter
+	typingErrors        prometheus.Counter
+	typingEvents        *prometheus.CounterVec
+	resyncs             *prometheus.CounterVec
 }
 
 func newMetrics(connections *registry.Registry) *metrics {
@@ -66,6 +72,30 @@ func newMetrics(connections *registry.Registry) *metrics {
 			Name: "gateway_subscription_errors_total",
 			Help: "Total number of conversation subscription errors.",
 		}, []string{"reason"}),
+		duplicateEvents: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gateway_duplicate_events_total",
+			Help: "Total number of durable events skipped because they were already delivered.",
+		}),
+		presenceTransitions: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_presence_transitions_total",
+			Help: "Total number of user presence transitions broadcast to conversations.",
+		}, []string{"state"}),
+		presenceErrors: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gateway_presence_errors_total",
+			Help: "Total number of presence tracking failures.",
+		}),
+		typingErrors: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gateway_typing_errors_total",
+			Help: "Total number of typing state failures.",
+		}),
+		typingEvents: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_typing_events_total",
+			Help: "Total number of typing events accepted from clients.",
+		}, []string{"action"}),
+		resyncs: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_client_resyncs_total",
+			Help: "Total number of clients told to resync a conversation.",
+		}, []string{"reason"}),
 	}
 
 	registry.MustRegister(
@@ -91,6 +121,12 @@ func newMetrics(connections *registry.Registry) *metrics {
 		m.eventsDelivered,
 		m.eventsDropped,
 		m.subscriptionErrors,
+		m.duplicateEvents,
+		m.presenceTransitions,
+		m.presenceErrors,
+		m.typingErrors,
+		m.typingEvents,
+		m.resyncs,
 	)
 
 	return m

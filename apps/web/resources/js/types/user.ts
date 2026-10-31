@@ -6,6 +6,7 @@ export type PublicUser = {
     bio: string | null;
     status_text: string | null;
     last_seen_at: string | null;
+    online?: boolean;
 };
 
 export type UserDevice = {

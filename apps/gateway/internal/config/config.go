@@ -35,6 +35,20 @@ type Config struct {
 
 	EventSubjectPrefix  string
 	TypingSubjectPrefix string
+
+	// Durable broker. When JetStream is enabled the gateway consumes outbox
+	// events from a durable consumer so events survive gateway restarts.
+	JetStreamEnabled  bool
+	JetStreamStream   string
+	JetStreamDurable  string
+	JetStreamMaxRetry int
+
+	PresenceSubjectPrefix string
+	ReceiptSubjectPrefix  string
+	PresenceSubjectTTL    time.Duration
+	TypingTTL             time.Duration
+	EventDedupeTTL        time.Duration
+	EventDedupeLimit      int
 }
 
 func Load() (Config, error) {
@@ -85,8 +99,40 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	jetStreamEnabled, err := boolean("GATEWAY_JETSTREAM_ENABLED", true)
+	if err != nil {
+		return Config{}, err
+	}
+
+	jetStreamMaxRetry, err := integer("GATEWAY_JETSTREAM_MAX_DELIVER", 10)
+	if err != nil {
+		return Config{}, err
+	}
+
+	presenceTTL, err := duration("GATEWAY_PRESENCE_TTL", 90*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+
+	typingTTL, err := duration("GATEWAY_TYPING_TTL", 6*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+
+	dedupeTTL, err := duration("GATEWAY_EVENT_DEDUPE_TTL", 10*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+
+	dedupeLimit, err := integer("GATEWAY_EVENT_DEDUPE_LIMIT", 20000)
+	if err != nil {
+		return Config{}, err
+	}
+
+	instanceID := env("GATEWAY_INSTANCE_ID", "gateway-local")
+
 	cfg := Config{
-		InstanceID:     env("GATEWAY_INSTANCE_ID", "gateway-local"),
+		InstanceID:     instanceID,
 		Addr:           env("GATEWAY_ADDR", ":8081"),
 		DatabaseURL:    env("DATABASE_URL", "postgres://postgres:postgres@127.0.0.1:5432/chat_app?sslmode=disable"),
 		RedisURL:       env("REDIS_URL", "redis://127.0.0.1:6379/0"),
@@ -109,6 +155,18 @@ func Load() (Config, error) {
 
 		EventSubjectPrefix:  env("GATEWAY_EVENT_SUBJECT_PREFIX", "chat.events."),
 		TypingSubjectPrefix: env("GATEWAY_TYPING_SUBJECT_PREFIX", "chat.typing."),
+
+		JetStreamEnabled:  jetStreamEnabled,
+		JetStreamStream:   env("GATEWAY_JETSTREAM_STREAM", "CHAT_EVENTS"),
+		JetStreamDurable:  durableName(env("GATEWAY_JETSTREAM_DURABLE", ""), instanceID),
+		JetStreamMaxRetry: jetStreamMaxRetry,
+
+		PresenceSubjectPrefix: env("GATEWAY_PRESENCE_SUBJECT_PREFIX", "chat.presence."),
+		ReceiptSubjectPrefix:  env("GATEWAY_RECEIPT_SUBJECT_PREFIX", "chat.receipts."),
+		PresenceSubjectTTL:    presenceTTL,
+		TypingTTL:             typingTTL,
+		EventDedupeTTL:        dedupeTTL,
+		EventDedupeLimit:      dedupeLimit,
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -154,6 +212,24 @@ func (c Config) validate() error {
 		return fmt.Errorf("GATEWAY_EVENT_SUBJECT_PREFIX must not be empty")
 	case strings.TrimSpace(c.TypingSubjectPrefix) == "":
 		return fmt.Errorf("GATEWAY_TYPING_SUBJECT_PREFIX must not be empty")
+	case strings.TrimSpace(c.PresenceSubjectPrefix) == "":
+		return fmt.Errorf("GATEWAY_PRESENCE_SUBJECT_PREFIX must not be empty")
+	case strings.TrimSpace(c.ReceiptSubjectPrefix) == "":
+		return fmt.Errorf("GATEWAY_RECEIPT_SUBJECT_PREFIX must not be empty")
+	case c.JetStreamEnabled && strings.TrimSpace(c.JetStreamStream) == "":
+		return fmt.Errorf("GATEWAY_JETSTREAM_STREAM must not be empty when JetStream is enabled")
+	case c.JetStreamEnabled && strings.TrimSpace(c.JetStreamDurable) == "":
+		return fmt.Errorf("GATEWAY_JETSTREAM_DURABLE must not be empty when JetStream is enabled")
+	case c.JetStreamMaxRetry < 1:
+		return fmt.Errorf("GATEWAY_JETSTREAM_MAX_DELIVER must be at least 1")
+	case c.PresenceSubjectTTL <= 0:
+		return fmt.Errorf("GATEWAY_PRESENCE_TTL must be positive")
+	case c.TypingTTL <= 0:
+		return fmt.Errorf("GATEWAY_TYPING_TTL must be positive")
+	case c.EventDedupeTTL <= 0:
+		return fmt.Errorf("GATEWAY_EVENT_DEDUPE_TTL must be positive")
+	case c.EventDedupeLimit < 1:
+		return fmt.Errorf("GATEWAY_EVENT_DEDUPE_LIMIT must be at least 1")
 	}
 
 	return nil
@@ -207,6 +283,31 @@ func number(key string, fallback float64) (float64, error) {
 	}
 
 	return parsed, nil
+}
+
+func boolean(key string, fallback bool) (bool, error) {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return fallback, nil
+	}
+
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("%s must be a boolean: %w", key, err)
+	}
+
+	return parsed, nil
+}
+
+// durableName derives the JetStream consumer name. Every gateway instance needs
+// its own durable consumer: a shared one would load balance events across
+// instances instead of fanning them out to every instance's clients.
+func durableName(configured, instanceID string) string {
+	if trimmed := strings.TrimSpace(configured); trimmed != "" {
+		return trimmed
+	}
+
+	return "gateway-" + instanceID
 }
 
 func split(value string) []string {

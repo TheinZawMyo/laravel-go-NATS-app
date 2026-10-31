@@ -61,9 +61,37 @@ func main() {
 		NATS:  nc,
 	})
 
+	store := outbox.NewPostgresStore(db)
+
+	var publisher outbox.Publisher = outbox.NewNATSPublisher(nc)
+
+	if cfg.JetStreamEnabled {
+		jetStreamPublisher, publishErr := outbox.NewJetStreamPublisher(ctx, nc, outbox.JetStreamConfig{
+			Stream:   cfg.JetStreamStream,
+			Subjects: cfg.JetStreamSubjects(),
+			MaxAge:   cfg.JetStreamMaxAge,
+			Replicas: cfg.JetStreamReplicas,
+		})
+		if publishErr != nil {
+			logger.Error("failed to configure the durable broker", "error", publishErr)
+			os.Exit(1)
+		}
+
+		publisher = jetStreamPublisher
+
+		logger.Info("outbox publishes into jetstream",
+			"stream", cfg.JetStreamStream,
+			"subjects", cfg.JetStreamSubjects(),
+			"max_age", cfg.JetStreamMaxAge.String(),
+			"replicas", cfg.JetStreamReplicas,
+		)
+	} else {
+		logger.Warn("jetstream is disabled; outbox events are published to core NATS without retention")
+	}
+
 	dispatcher := outbox.New(
-		outbox.NewPostgresStore(db),
-		outbox.NewNATSPublisher(nc),
+		store,
+		publisher,
 		logger,
 		outbox.Options{
 			SubjectPrefix: cfg.EventSubjectPrefix,
@@ -73,7 +101,10 @@ func main() {
 		},
 	)
 
+	backlogMonitor := outbox.NewBacklogMonitor(store, logger, cfg.BacklogInterval)
+
 	dispatcherDone := make(chan struct{})
+	monitorDone := make(chan struct{})
 
 	go func() {
 		defer close(dispatcherDone)
@@ -81,11 +112,18 @@ func main() {
 		dispatcher.Run(ctx)
 	}()
 
+	go func() {
+		defer close(monitorDone)
+
+		backlogMonitor.Run(ctx)
+	}()
+
 	logger.Info(
 		"worker started",
 		"instance", cfg.InstanceID,
 		"poll", cfg.PollEvery.String(),
 		"outbox_poll", cfg.OutboxPollEvery.String(),
+		"backlog_interval", cfg.BacklogInterval.String(),
 	)
 
 	err = healthServer.Run(ctx)
@@ -93,11 +131,13 @@ func main() {
 		logger.Error("worker stopped", "error", err)
 		stop()
 		<-dispatcherDone
+		<-monitorDone
 
 		os.Exit(1)
 	}
 
 	<-dispatcherDone
+	<-monitorDone
 
 	logger.Info("worker stopped")
 }

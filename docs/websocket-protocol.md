@@ -59,7 +59,7 @@ Every server frame uses one envelope shape:
 | Type | Payload | Notes |
 |---|---|---|
 | `connection.authenticate` | `{ "token": "…" }` | Required before anything else; also used for renewal |
-| `conversation.subscribe` | `{ "conversation_id": "…" }` | Authorized server side against membership |
+| `conversation.subscribe` | `{ "conversation_id": "…", "last_seq": 105 }` | Authorized server side against membership; `last_seq` is the highest sequence the client already rendered and may be omitted |
 | `conversation.unsubscribe` | `{ "conversation_id": "…" }` | Idempotent |
 | `typing.start` | `{ "conversation_id": "…" }` | Requires an existing subscription |
 | `typing.stop` | `{ "conversation_id": "…" }` | Requires an existing subscription |
@@ -69,12 +69,44 @@ Every server frame uses one envelope shape:
 
 ## Gateway to client
 
-`connection.ready`, `connection.error`, `pong`, `message.created`, `message.updated`, `message.deleted`, `message.reaction.updated`, `receipt.updated`, `typing.updated`, `presence.updated`, `conversation.updated`, `sync.required`.
+`connection.ready`, `connection.error`, `pong`, `message.created`, `message.updated`, `message.deleted`, `message.reaction.updated`, `receipt.updated`, `typing.updated`, `presence.updated`, `conversation.updated`, `conversation.subscribed`, `sync.required`.
 
 Message events (`message.created`, `message.updated`, `message.deleted`) are never produced by the gateway itself. Laravel commits them to the `outbox_events` table in the same transaction as the message, and the worker publishes them to
 `chat.events.conversation.<conversation-id>`; the gateway forwards the envelope unchanged. `data` therefore has exactly the shape of the REST message resource, and the event is delivered to **every** subscriber of the conversation, including the sender's other devices.
 
 Typing and receipts use the ephemeral `chat.typing.*` subjects. Delivery is at-least-once: deduplicate by `event_id` and collapse messages by `id`/`client_message_id`.
+
+Realtime state events carry small payloads, never message history:
+
+| Type | `data` | Notes |
+|---|---|---|
+| `receipt.updated` | `{ "conversation_id", "user_id", "seq", "read" }` | Per member cursor; clients apply the highest `seq` per member and never move it backwards |
+| `presence.updated` | `{ "conversation_id", "user_id", "online", "last_seen_at"? }` | `last_seen_at` is sent when a member goes offline; the UI formats the relative wording itself |
+| `typing.updated` | `{ "conversation_id", "user_id", "is_typing", "expires_at" }` | Expires client side so a dropped `typing.stop` cannot leave a stuck indicator |
+| `conversation.subscribed` | `{ "conversation_id", "latest_seq", "last_seq"? }` | Acknowledgement for every accepted `conversation.subscribe` |
+| `sync.required` | `{ "conversation_id", "last_seq", "latest_seq", "reason" }` | The subscription cursor is behind `latest_seq`; history must be refetched over HTTP |
+
+## Cursor and resync
+
+The gateway never replays history. `latestSeq` is read from the latest committed message of the conversation, so the client can resume from its own cursor:
+
+1. The client remembers the highest `seq` it rendered per conversation and sends it as `last_seq` on every `conversation.subscribe`, including the replays after a reconnect.
+2. The gateway replies with `conversation.subscribed` carrying `latest_seq`, then echoes the client cursor as `last_seq` when it was supplied.
+3. When `latest_seq` is greater than the client cursor the gateway immediately follows with `sync.required`. The client refetches the conversation summaries and, for the visible conversation, the newest message page over HTTP.
+4. Both frames describe the same gap, so the client collapses concurrent resyncs for one conversation into a single refetch.
+5. Presence is re-seeded right after the acknowledgement, so a reconnect does not leave stale online dots behind.
+
+A subscription sent without `last_seq` is treated as "unknown cursor": the gateway acknowledges it and never asks for a resync.
+
+## Presence troubleshooting
+
+Presence is derived from the leases the gateway writes to Redis and is only published when a member transitions between online and offline. When an online dot never appears:
+
+1. `curl -s localhost:8081/metrics | grep gateway_presence` must expose `gateway_presence_transitions_total`. A missing metric means the running gateway binary predates the presence code, so restart it (`make gateway-dev`) after pulling gateway changes.
+2. `redis-cli --scan --pattern 'presence:user:*'` lists one key per online user while a socket is open; the key disappears with that user's last connection, and `presence:lastseen:*` keeps the timestamp for the offline label.
+3. The REST snapshot has to read the same Redis database and prefix as the gateway: `PRESENCE_ENABLED`, `PRESENCE_REDIS_CONNECTION`, `REDIS_PRESENCE_DB` and `REDIS_PRESENCE_PREFIX` in the web `.env` must match the gateway's `REDIS_URL`.
+4. `php artisan tinker` → `app(App\Services\PresenceService::class)->snapshot([$userId])` reporting `online: false` while step 2 shows a key means Laravel is pointed at the wrong database or prefix.
+
 
 Errors are sent as an envelope with `type: "connection.error"` and a `data.code`:
 
@@ -127,6 +159,7 @@ The per user cap is checked against the registry before the connection joins it,
 - Reconnect with exponential backoff plus jitter, then replay `conversation.subscribe` for every conversation still on screen.
 - Re-authenticate on the same socket before `connection_token_expires_at`, and fall back to a full reconnect if renewal fails.
 - Deduplicate by `event_id`, and reconcile live events against HTTP responses by `seq`.
+- Track the highest rendered `seq` per conversation, send it as `last_seq`, and refetch over HTTP when `sync.required` or an ahead `conversation.subscribed` arrives.
 - Never exceed `max_subscriptions`; when more conversations are needed, page them instead of subscribing to everything.
 
 ## Metrics

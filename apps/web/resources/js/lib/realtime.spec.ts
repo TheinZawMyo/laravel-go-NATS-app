@@ -352,6 +352,34 @@ describe('RealtimeClient', () => {
         client.stop();
     });
 
+    it('sends the last applied sequence when subscribing', async () => {
+        vi.useFakeTimers();
+
+        const { client, socket } = await connectClient({
+            getLastSeq: (conversationId) =>
+                conversationId === 'conversation-1' ? 42 : null,
+        });
+
+        client.setSubscriptions(['conversation-1', 'conversation-2']);
+
+        const frames = socket
+            .frames()
+            .filter((frame) => frame.type === 'conversation.subscribe');
+
+        expect(frames).toEqual([
+            {
+                type: 'conversation.subscribe',
+                data: { conversation_id: 'conversation-1', last_seq: 42 },
+            },
+            {
+                type: 'conversation.subscribe',
+                data: { conversation_id: 'conversation-2' },
+            },
+        ]);
+
+        client.stop();
+    });
+
     it('surfaces the close reason reported by the gateway', async () => {
         vi.useFakeTimers();
 

@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { MessagesSquare, Search } from '@lucide/vue';
+import { Bell, BellOff, MessagesSquare, Search } from '@lucide/vue';
 import ConnectionStatus from '@/components/chat/ConnectionStatus.vue';
 import NewConversationDialog from '@/components/chat/NewConversationDialog.vue';
+import PresenceDot from '@/components/chat/PresenceDot.vue';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -15,10 +17,14 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
     conversationTitle,
     formatConversationTime,
+    formatPresence,
     messagePreview,
 } from '@/lib/format';
+import { notificationState, requestNotifications } from '@/lib/notifications';
+import type { NotificationState } from '@/lib/notifications';
 import { useInitials } from '@/composables/useInitials';
 import { useAuth } from '@/composables/useAuth';
+import { useNow } from '@/composables/useNow';
 import { useChatStore } from '@/stores/chat';
 import UserMenuContent from '@/components/UserMenuContent.vue';
 import type { Conversation } from '@/types';
@@ -26,9 +32,15 @@ import type { Conversation } from '@/types';
 const chat = useChatStore();
 const { user } = useAuth();
 const { getInitials } = useInitials();
+const now = useNow();
 
 const search = ref('');
 const filter = ref<'all' | 'unread'>('all');
+const notifications = ref<NotificationState>(notificationState());
+
+async function toggleNotifications(): Promise<void> {
+    notifications.value = await requestNotifications();
+}
 
 const unreadConversationCount = computed(
     () =>
@@ -78,6 +90,18 @@ function preview(conversation: Conversation): string {
     }
 
     return messagePreview(message);
+}
+
+/**
+ * Direct chats expose the other member's presence; groups have no single
+ * participant, so nothing is rendered for them.
+ */
+function presenceFor(conversation: Conversation): string | null {
+    return formatPresence(conversation.participant, now.value);
+}
+
+function isOnline(conversation: Conversation): boolean {
+    return conversation.participant?.online === true;
 }
 
 function open(conversation: Conversation): void {
@@ -130,6 +154,31 @@ function open(conversation: Conversation): void {
             </div>
             <div class="flex shrink-0 items-center gap-2">
                 <ConnectionStatus />
+                <Button
+                    v-if="notifications !== 'unsupported'"
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    class="text-muted-foreground hover:text-chat-accent"
+                    :aria-pressed="notifications === 'granted'"
+                    :disabled="notifications === 'denied'"
+                    :aria-label="
+                        notifications === 'granted'
+                            ? 'Desktop notifications are on'
+                            : notifications === 'denied'
+                              ? 'Desktop notifications are blocked in your browser settings'
+                              : 'Enable desktop notifications'
+                    "
+                    :title="
+                        notifications === 'denied'
+                            ? 'Notifications are blocked in your browser settings'
+                            : undefined
+                    "
+                    @click="toggleNotifications"
+                >
+                    <Bell v-if="notifications === 'granted'" />
+                    <BellOff v-else />
+                </Button>
                 <NewConversationDialog />
             </div>
         </header>
@@ -260,18 +309,30 @@ function open(conversation: Conversation): void {
                         "
                         @click="open(conversation)"
                     >
-                        <Avatar
-                            class="size-14 shrink-0 ring-1 ring-black/5 dark:ring-white/10"
-                        >
-                            <AvatarImage
-                                v-if="conversation.participant?.avatar_url"
-                                :src="conversation.participant.avatar_url"
-                                :alt="conversationTitle(conversation)"
+                        <div class="relative shrink-0">
+                            <Avatar
+                                class="size-14 ring-1 ring-black/5 dark:ring-white/10"
+                            >
+                                <AvatarImage
+                                    v-if="conversation.participant?.avatar_url"
+                                    :src="conversation.participant.avatar_url"
+                                    :alt="conversationTitle(conversation)"
+                                />
+                                <AvatarFallback>
+                                    {{ initials(conversation) }}
+                                </AvatarFallback>
+                            </Avatar>
+                            <PresenceDot
+                                :online="isOnline(conversation)"
+                                :name="conversationTitle(conversation)"
+                                :border-class="
+                                    chat.activeConversationId ===
+                                    conversation.id
+                                        ? 'border-chat-accent'
+                                        : 'border-background'
+                                "
                             />
-                            <AvatarFallback>
-                                {{ initials(conversation) }}
-                            </AvatarFallback>
-                        </Avatar>
+                        </div>
 
                         <div class="min-w-0 flex-1">
                             <div
@@ -341,6 +402,20 @@ function open(conversation: Conversation): void {
                                     }}
                                 </Badge>
                             </div>
+                            <p
+                                v-if="presenceFor(conversation) !== null"
+                                class="mt-0.5 truncate text-[11px]"
+                                :class="
+                                    chat.activeConversationId ===
+                                    conversation.id
+                                        ? 'text-white/75'
+                                        : isOnline(conversation)
+                                          ? 'font-medium text-emerald-600 dark:text-emerald-400'
+                                          : 'text-muted-foreground'
+                                "
+                            >
+                                <!-- {{ presenceFor(conversation) }} -->
+                            </p>
                         </div>
                     </button>
                 </li>

@@ -16,6 +16,7 @@ Route::middleware(['web', 'auth'])->prefix('v1')->group(function () {
     Route::get('users/{username}', [UserController::class, 'show'])->name('api.v1.users.show');
 
     Route::get('devices', [DeviceController::class, 'index'])->name('api.v1.devices.index');
+    Route::post('devices', [DeviceController::class, 'store'])->name('api.v1.devices.store');
     Route::delete('devices/{device}', [DeviceController::class, 'destroy'])->name('api.v1.devices.destroy');
 
     Route::get('conversations', [ConversationController::class, 'index'])->name('api.v1.conversations.index');

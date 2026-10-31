@@ -70,6 +70,11 @@ func (c *Connection) run() {
 		c.forceClose()
 
 		if c.authenticated.Load() {
+			// A vanished client must not leave a stale typing indicator or an
+			// online dot behind.
+			c.server.clearTyping(c.userID, c.id)
+			c.server.releasePresence(c.userID, c.id)
+
 			reason := c.closeReason()
 			c.server.metrics.disconnects.WithLabelValues(c.server.cfg.InstanceID, reason).Inc()
 			c.server.logger.Info("websocket disconnected",
@@ -225,6 +230,7 @@ func (c *Connection) authenticate(message protocol.ClientMessage, renewing bool)
 		c.authenticated.Store(true)
 		c.server.clients.Add(c)
 		c.server.metrics.connects.WithLabelValues(c.server.cfg.InstanceID).Inc()
+		c.server.trackPresence(c.userID, c.id)
 
 		c.server.logger.Info("websocket connected",
 			"connection_id", c.id,
@@ -336,8 +342,18 @@ func (c *Connection) closeReason() string {
 }
 
 func (c *Connection) subscribe(message protocol.ClientMessage) {
-	conversationID, ok := c.conversationID(message)
-	if !ok {
+	var data protocol.ConversationData
+	if err := json.Unmarshal(message.Data, &data); err != nil || !validID(data.ConversationID) {
+		c.sendError(message.RequestID, "invalid_payload", "A valid conversation_id is required.")
+
+		return
+	}
+
+	conversationID := data.ConversationID
+
+	if data.LastSeq != nil && *data.LastSeq < 0 {
+		c.sendError(message.RequestID, "invalid_payload", "last_seq must not be negative.")
+
 		return
 	}
 
@@ -376,6 +392,38 @@ func (c *Connection) subscribe(message protocol.ClientMessage) {
 	}
 
 	c.server.clients.Subscribe(c, conversationID)
+
+	snapshotCtx, snapshotCancel := context.WithTimeout(c.server.ctx, 3*time.Second)
+	defer snapshotCancel()
+
+	latestSeq := c.server.latestSeq(snapshotCtx, conversationID)
+
+	// Acknowledge first so the client knows the subscription is live and which
+	// cursor the server is at.
+	if envelope, err := protocol.NewEnvelope(protocol.ServerSubscribed, &conversationID, nil, protocol.SubscribedData{
+		ConversationID: conversationID,
+		LatestSeq:      latestSeq,
+		LastSeq:        data.LastSeq,
+	}); err == nil {
+		c.sendEnvelope(envelope)
+	}
+
+	// A client that reconnects with its cursor and is behind must refetch over
+	// HTTP: JetStream history is not retained long enough to replay it here.
+	if data.LastSeq != nil && latestSeq > *data.LastSeq {
+		c.server.metrics.resyncs.WithLabelValues("missed_events").Inc()
+
+		if envelope, err := protocol.NewEnvelope(protocol.ServerSyncRequired, &conversationID, nil, protocol.SyncRequiredData{
+			ConversationID: conversationID,
+			LastSeq:        *data.LastSeq,
+			LatestSeq:      latestSeq,
+			Reason:         "missed_events",
+		}); err == nil {
+			c.sendEnvelope(envelope)
+		}
+	}
+
+	c.server.sendPresenceSnapshot(snapshotCtx, c, conversationID)
 }
 
 func (c *Connection) unsubscribe(message protocol.ClientMessage) {
@@ -399,17 +447,37 @@ func (c *Connection) typing(message protocol.ClientMessage, isTyping bool) {
 		return
 	}
 
-	envelope, err := protocol.NewEnvelope(protocol.ServerTypingUpdated, &conversationID, nil, protocol.TypingData{
+	ctx, cancel := context.WithTimeout(c.server.ctx, 3*time.Second)
+
+	if isTyping {
+		if err := c.server.typing.Start(ctx, conversationID, c.userID, c.id); err != nil {
+			c.server.metrics.typingErrors.Inc()
+			c.server.logger.Debug("failed to record typing state", "connection_id", c.id, "error", err)
+		}
+
+		c.server.metrics.typingEvents.WithLabelValues("start").Inc()
+	} else {
+		if err := c.server.typing.Stop(ctx, conversationID, c.userID, c.id); err != nil {
+			c.server.metrics.typingErrors.Inc()
+			c.server.logger.Debug("failed to clear typing state", "connection_id", c.id, "error", err)
+		}
+
+		c.server.metrics.typingEvents.WithLabelValues("stop").Inc()
+	}
+
+	cancel()
+
+	expiresAt := time.Now().UTC()
+	if isTyping {
+		expiresAt = expiresAt.Add(c.server.cfg.TypingTTL)
+	}
+
+	c.server.publishTyping(conversationID, protocol.TypingData{
 		ConversationID: conversationID,
 		UserID:         c.userID,
 		IsTyping:       isTyping,
-		ExpiresAt:      time.Now().UTC().Add(5 * time.Second).Format(time.RFC3339),
+		ExpiresAt:      expiresAt.Format(time.RFC3339),
 	})
-	if err != nil {
-		return
-	}
-
-	c.server.publishEphemeral(envelope, conversationID)
 }
 
 func (c *Connection) receipt(message protocol.ClientMessage, read bool) {
@@ -438,18 +506,17 @@ func (c *Connection) receipt(message protocol.ClientMessage, read bool) {
 		return
 	}
 
-	envelope, err := protocol.NewEnvelope(protocol.ServerReceiptUpdated, &data.ConversationID, &data.Seq, protocol.ReceiptUpdatedData{
+	// The WebSocket path only exists for latency: the read cursor itself is
+	// persisted by POST /api/v1/conversations/{id}/read, which publishes the
+	// authoritative receipt.updated event. Clients must therefore treat
+	// receipts as monotonic and idempotent.
+	c.server.publishReceipt(data.ConversationID, data.Seq, protocol.ReceiptUpdatedData{
 		ConversationID: data.ConversationID,
 		UserID:         c.userID,
 		MessageID:      data.MessageID,
 		Seq:            data.Seq,
 		Read:           read,
 	})
-	if err != nil {
-		return
-	}
-
-	c.server.publishEphemeral(envelope, data.ConversationID)
 }
 
 func (c *Connection) conversationID(message protocol.ClientMessage) (string, bool) {
@@ -492,6 +559,10 @@ func (c *Connection) writeLoop() {
 				c.forceClose()
 
 				return
+			}
+
+			if c.authenticated.Load() {
+				c.server.refreshPresence(c.userID, c.id)
 			}
 		case <-c.done:
 			return
