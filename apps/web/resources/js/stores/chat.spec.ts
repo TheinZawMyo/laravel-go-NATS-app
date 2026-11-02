@@ -1,6 +1,12 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChatMessage, Conversation, MessagePin, User } from '@/types';
+import type {
+    ChatMessage,
+    Conversation,
+    MessageAttachment,
+    MessagePin,
+    User,
+} from '@/types';
 import { useAuthStore } from './auth';
 import { useChatStore } from './chat';
 
@@ -69,11 +75,33 @@ function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
         sender: other,
         type: 'text',
         body: 'Hello',
+        attachments: [],
         reply_to: null,
         edited_at: null,
         deleted_at: null,
         created_at: '2026-10-29T00:00:00Z',
         updated_at: '2026-10-29T00:00:00Z',
+        ...overrides,
+    };
+}
+
+function attachment(
+    overrides: Partial<MessageAttachment> = {},
+): MessageAttachment {
+    return {
+        id: 'attachment-1',
+        message_id: 'message-1',
+        name: 'photo.png',
+        mime_type: 'image/png',
+        kind: 'image',
+        size_bytes: 1024,
+        width: 100,
+        height: 100,
+        duration_ms: null,
+        url: '/api/v1/messages/message-1/attachments/attachment-1',
+        thumbnail_url: null,
+        created_at: '2026-10-29T00:00:00Z',
+        message_seq: 10,
         ...overrides,
     };
 }
@@ -722,5 +750,93 @@ describe('chat store', () => {
 
         expect(store.conversations).toHaveLength(0);
         expect(store.activeConversation).toBeNull();
+    });
+
+    it('pages the shared media gallery with the cursor and skips duplicates', async () => {
+        const store = useChatStore();
+
+        fetchMock.mockResolvedValueOnce(
+            success({
+                data: [
+                    attachment({ id: 'attachment-3', message_seq: 30 }),
+                    attachment({ id: 'attachment-2', message_seq: 20 }),
+                ],
+                meta: { has_more: true, next_cursor: 20 },
+            }),
+        );
+
+        await store.fetchMedia(conversation.id, true);
+
+        expect(store.mediaFor(conversation.id).map((item) => item.id)).toEqual([
+            'attachment-3',
+            'attachment-2',
+        ]);
+        expect(store.mediaHasMoreFor(conversation.id)).toBe(true);
+
+        const [firstUrl] = fetchMock.mock.calls[0] as [string, RequestInit];
+        expect(firstUrl).toContain(
+            `/api/v1/conversations/${conversation.id}/media?`,
+        );
+        expect(firstUrl).toContain('limit=40');
+        expect(firstUrl).not.toContain('before_seq');
+
+        // The retry repeats an id the client already holds: dedupe, don't grow.
+        fetchMock.mockResolvedValueOnce(
+            success({
+                data: [
+                    attachment({ id: 'attachment-2', message_seq: 20 }),
+                    attachment({ id: 'attachment-1', message_seq: 10 }),
+                ],
+                meta: { has_more: false, next_cursor: null },
+            }),
+        );
+
+        await store.fetchMedia(conversation.id);
+
+        expect(store.mediaFor(conversation.id).map((item) => item.id)).toEqual([
+            'attachment-3',
+            'attachment-2',
+            'attachment-1',
+        ]);
+        expect(store.mediaHasMoreFor(conversation.id)).toBe(false);
+
+        const [secondUrl] = fetchMock.mock.calls[1] as [string, RequestInit];
+        expect(secondUrl).toContain('before_seq=20');
+    });
+
+    it('reloads the gallery from the newest attachment on reset', async () => {
+        const store = useChatStore();
+
+        fetchMock.mockResolvedValueOnce(
+            success({
+                data: [attachment({ id: 'attachment-2', message_seq: 20 })],
+                meta: { has_more: true, next_cursor: 20 },
+            }),
+        );
+
+        await store.fetchMedia(conversation.id, true);
+
+        fetchMock.mockResolvedValueOnce(
+            success({
+                data: [attachment({ id: 'attachment-9', message_seq: 90 })],
+                meta: { has_more: true, next_cursor: 90 },
+            }),
+        );
+
+        await store.fetchMedia(conversation.id, true);
+
+        expect(store.mediaFor(conversation.id).map((item) => item.id)).toEqual([
+            'attachment-9',
+        ]);
+
+        const [url] = fetchMock.mock.calls[1] as [string, RequestInit];
+        expect(url).not.toContain('before_seq');
+    });
+
+    it('returns an empty gallery for an unknown conversation', () => {
+        const store = useChatStore();
+
+        expect(store.mediaFor(null)).toEqual([]);
+        expect(store.mediaHasMoreFor(null)).toBe(false);
     });
 });

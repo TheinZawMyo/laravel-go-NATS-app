@@ -54,7 +54,11 @@ class MessageController extends Controller
             $conversation,
             [
                 'client_message_id' => (string) $validated['client_message_id'],
-                'body' => (string) $validated['body'],
+                'body' => (string) ($validated['body'] ?? ''),
+                'attachment_ids' => array_values(array_map(
+                    'strval',
+                    $validated['attachment_ids'] ?? [],
+                )),
                 'type' => (string) ($validated['type'] ?? 'text'),
                 'reply_to_message_id' => isset($validated['reply_to_message_id'])
                     ? (string) $validated['reply_to_message_id']

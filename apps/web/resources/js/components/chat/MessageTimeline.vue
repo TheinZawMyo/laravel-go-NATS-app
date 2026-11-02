@@ -7,6 +7,7 @@ import MessageBubble from '@/components/chat/MessageBubble.vue';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { formatMessageDay, messageDayKey } from '@/lib/format';
+import { useMounted } from '@/composables/useMounted';
 import { useNow } from '@/composables/useNow';
 import { useChatStore } from '@/stores/chat';
 import type { ChatMessage } from '@/types';
@@ -15,6 +16,9 @@ const chat = useChatStore();
 // Day labels must roll over at midnight even if no message arrives, so the
 // divider computation reads a clock that ticks once a minute.
 const now = useNow(60_000);
+// "Today" and "Yesterday" resolve against the viewer's clock and timezone, so
+// dividers stay out of the server render and appear once hydration is finished.
+const mounted = useMounted();
 
 const scrollElement = ref<HTMLElement | null>(null);
 const stickToBottom = ref(true);
@@ -38,9 +42,10 @@ const rows = computed<TimelineRow[]>(() => {
     return chat.messages.map((message) => {
         const day = messageDayKey(message.created_at);
         const startsDay = day !== previousDay;
-        const label = startsDay
-            ? formatMessageDay(message.created_at, nowMs)
-            : '';
+        const label =
+            startsDay && mounted.value
+                ? formatMessageDay(message.created_at, nowMs)
+                : '';
 
         previousDay = day;
 

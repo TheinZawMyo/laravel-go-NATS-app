@@ -36,6 +36,7 @@ function message(seq: number, body: string, createdAt?: Date): ChatMessage {
         sender: other,
         type: 'text',
         body,
+        attachments: [],
         reply_to: null,
         edited_at: null,
         deleted_at: null,

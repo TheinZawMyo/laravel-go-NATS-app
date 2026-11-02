@@ -339,33 +339,33 @@ Support secure sharing of images, videos, audio, voice messages, and documents.
 
 ## Backend
 
-- [ ] Configure S3-compatible object storage or MinIO.
-- [ ] Implement presigned upload requests.
-- [ ] Validate file size, MIME type, and file signature.
-- [ ] Generate random storage keys; do not trust user-provided paths.
-- [ ] Store attachment metadata in `message_attachments`.
-- [ ] Implement upload completion validation.
-- [ ] Implement media processing and thumbnail jobs.
-- [ ] Add malware scanning where appropriate.
-- [ ] Enforce download authorization.
-- [ ] Implement abandoned-upload cleanup.
-- [ ] Define retention and deletion behavior for attachments.
+- [x] Configure S3-compatible object storage or MinIO.
+- [x] Implement presigned upload requests.
+- [x] Validate file size, MIME type, and file signature.
+- [x] Generate random storage keys; do not trust user-provided paths.
+- [x] Store attachment metadata in `message_attachments`.
+- [x] Implement upload completion validation.
+- [x] Implement media processing and thumbnail jobs.
+- [x] Add malware scanning where appropriate.
+- [x] Enforce download authorization.
+- [x] Implement abandoned-upload cleanup.
+- [x] Define retention and deletion behavior for attachments.
 
 ## Frontend
 
-- [ ] Implement drag-and-drop uploads.
-- [ ] Show upload progress and failures.
-- [ ] Preview images and supported media.
-- [ ] Implement voice-message recording if required.
-- [ ] Display file type, size, and download status.
-- [ ] Add a shared media/files gallery.
+- [x] Implement drag-and-drop uploads.
+- [x] Show upload progress and failures.
+- [x] Preview images and supported media.
+- [x] Implement voice-message recording if required.
+- [x] Display file type, size, and download status.
+- [x] Add a shared media/files gallery.
 
 ## Completion Criteria
 
-- [ ] Unauthorized users cannot access private attachments.
-- [ ] Oversized, malformed, and disallowed files are rejected.
-- [ ] Media processing failures can be retried.
-- [ ] Files remain available independently of application container restarts.
+- [x] Unauthorized users cannot access private attachments.
+- [x] Oversized, malformed, and disallowed files are rejected.
+- [x] Media processing failures can be retried.
+- [x] Files remain available independently of application container restarts.
 
 ---
 

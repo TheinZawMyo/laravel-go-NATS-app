@@ -24,6 +24,10 @@ class MessageResource extends JsonResource
             'sender' => (new PublicUserResource($this->sender))->resolve($request),
             'type' => $this->type->value,
             'body' => $this->deleted_at === null ? $this->body : null,
+            'attachments' => $this->deleted_at === null
+                ? MessageAttachmentResource::collection($this->resource->attachments)
+                    ->resolve($request)
+                : [],
             'reply_to' => $this->whenLoaded(
                 'replyTo',
                 fn () => $this->replyTo !== null

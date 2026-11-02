@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { Bell, BellOff, MessagesSquare, Search } from '@lucide/vue';
 import ConnectionStatus from '@/components/chat/ConnectionStatus.vue';
 import CreateGroupDialog from '@/components/chat/CreateGroupDialog.vue';
@@ -26,6 +26,7 @@ import { notificationState, requestNotifications } from '@/lib/notifications';
 import type { NotificationState } from '@/lib/notifications';
 import { useInitials } from '@/composables/useInitials';
 import { useAuth } from '@/composables/useAuth';
+import { useMounted } from '@/composables/useMounted';
 import { useNow } from '@/composables/useNow';
 import { useChatStore } from '@/stores/chat';
 import UserMenuContent from '@/components/UserMenuContent.vue';
@@ -38,7 +39,19 @@ const now = useNow();
 
 const search = ref('');
 const filter = ref<'all' | 'unread' | 'archived'>('all');
-const notifications = ref<NotificationState>(notificationState());
+const mounted = useMounted();
+
+/**
+ * The Notification permission is browser state, so it is read after mount. The
+ * first render (server and client alike) therefore shows no bell: reading it
+ * during setup produced a `<!---->` vs `<button>` hydration mismatch because
+ * server rendering has no `window`.
+ */
+const notifications = ref<NotificationState>('unsupported');
+
+onMounted(() => {
+    notifications.value = notificationState();
+});
 
 async function toggleNotifications(): Promise<void> {
     notifications.value = await requestNotifications();
@@ -115,14 +128,36 @@ function preview(conversation: Conversation): string {
 
 /**
  * Direct chats expose the other member's presence; groups have no single
- * participant, so nothing is rendered for them.
+ * participant, so nothing is rendered for them. Presence wording is relative to
+ * the viewer's clock, so it stays hidden until the component mounts: a server
+ * rendered "Last seen 2m ago" and a client rendered "Last seen 3m ago" would
+ * otherwise mismatch during hydration.
  */
 function presenceFor(conversation: Conversation): string | null {
+    if (!mounted.value) {
+        return null;
+    }
+
     return formatPresence(conversation.participant, now.value);
 }
 
 function isOnline(conversation: Conversation): boolean {
     return conversation.participant?.online === true;
+}
+
+/**
+ * The list timestamp shows a clock time for today and a date for older days,
+ * which resolves against the viewer's timezone and day. Holding it back until
+ * mount keeps server HTML and the client's first render identical.
+ */
+function conversationTime(conversation: Conversation): string {
+    if (!mounted.value) {
+        return '';
+    }
+
+    return formatConversationTime(
+        conversation.last_message?.created_at ?? conversation.updated_at,
+    );
 }
 
 /** Groups carry their own avatar; direct chats use the other participant's. */
@@ -209,8 +244,6 @@ function open(conversation: Conversation): void {
                     <Bell v-if="notifications === 'granted'" />
                     <BellOff v-else />
                 </Button>
-                <PeopleDialog />
-                <CreateGroupDialog />
                 <NewConversationDialog />
             </div>
         </header>
@@ -355,7 +388,7 @@ function open(conversation: Conversation): void {
                 >
                     <button
                         type="button"
-                        class="group flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left transition-colors focus-visible:ring-2 focus-visible:ring-chat-accent/70 focus-visible:outline-none focus-visible:ring-inset sm:gap-3.5 sm:px-3.5"
+                        class="group flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left transition-colors focus-visible:ring-2 focus-visible:ring-chat-accent/70 focus-visible:outline-none focus-visible:ring-inset sm:gap-3.5 sm:px-3.5"
                         :class="{
                             'bg-chat-accent text-white shadow-md shadow-chat-accent/15 hover:bg-chat-accent/95':
                                 chat.activeConversationId === conversation.id,
@@ -431,13 +464,7 @@ function open(conversation: Conversation): void {
                                               : 'text-muted-foreground'
                                     "
                                 >
-                                    {{
-                                        formatConversationTime(
-                                            conversation.last_message
-                                                ?.created_at ??
-                                                conversation.updated_at,
-                                        )
-                                    }}
+                                    {{ conversationTime(conversation) }}
                                 </span>
                             </div>
                             <div
@@ -492,6 +519,13 @@ function open(conversation: Conversation): void {
                     </button>
                 </li>
             </ul>
+        </div>
+
+        <div class="shrink-0 border-t border-border/60 px-4 py-3 sm:px-5">
+            <div class="flex items-center gap-2">
+                <PeopleDialog />
+                <CreateGroupDialog />
+            </div>
         </div>
     </div>
 </template>

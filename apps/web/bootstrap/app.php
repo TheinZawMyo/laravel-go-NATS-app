@@ -20,6 +20,10 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->encryptCookies(except: ['appearance', 'sidebar_state']);
 
+        // The presigned upload receiver authenticates via its URL signature,
+        // so a browser PUT must not also be required to carry a CSRF token.
+        $middleware->validateCsrfTokens(except: ['api/v1/uploads/*']);
+
         $middleware->web(append: [
             HandleAppearance::class,
             HandleInertiaRequests::class,

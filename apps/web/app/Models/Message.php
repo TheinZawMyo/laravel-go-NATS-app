@@ -85,4 +85,12 @@ class Message extends Model
     {
         return $this->hasMany(MessageEdit::class);
     }
+
+    /**
+     * @return HasMany<MessageAttachment, $this>
+     */
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(MessageAttachment::class);
+    }
 }

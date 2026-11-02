@@ -106,7 +106,7 @@ class ConversationService
                 $query->whereKey($user->id)
                     ->whereNull('conversation_members.left_at');
             })
-            ->with(['lastMessage.sender', 'members'])
+            ->with(['lastMessage.sender', 'lastMessage.attachments', 'members'])
             ->orderByDesc('updated_at')
             ->get();
 
@@ -127,7 +127,7 @@ class ConversationService
 
     public function prepareForViewer(User $user, Conversation $conversation): Conversation
     {
-        $conversation->loadMissing(['lastMessage.sender', 'members']);
+        $conversation->loadMissing(['lastMessage.sender', 'lastMessage.attachments', 'members']);
 
         $unreadCounts = $this->unreadCountsFor($user, collect([$conversation->id]));
 

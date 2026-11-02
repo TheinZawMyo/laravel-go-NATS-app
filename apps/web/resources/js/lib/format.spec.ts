@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+    formatDuration,
+    formatFileSize,
     formatLastSeen,
     formatMessageDay,
     formatPresence,
@@ -128,5 +130,35 @@ describe('formatMessageDay', () => {
 
     it('returns an empty label for unparseable timestamps', () => {
         expect(formatMessageDay('not-a-date', NOW_MS)).toBe('');
+    });
+});
+
+describe('formatDuration', () => {
+    it('formats a clip as a media clock', () => {
+        expect(formatDuration(7_000)).toBe('0:07');
+        expect(formatDuration(271_000)).toBe('4:31');
+    });
+
+    it('adds an hour segment for long clips', () => {
+        expect(formatDuration(3_729_000)).toBe('1:02:09');
+    });
+
+    it('renders unknown durations as an empty label', () => {
+        expect(formatDuration(null)).toBe('');
+        expect(formatDuration(0)).toBe('');
+        expect(formatDuration(Number.NaN)).toBe('');
+    });
+});
+
+describe('formatFileSize', () => {
+    it('switches units as the size grows', () => {
+        expect(formatFileSize(512)).toBe('512 B');
+        expect(formatFileSize(2_048)).toBe('2 KB');
+        expect(formatFileSize(26_214_400)).toBe('25 MB');
+    });
+
+    it('renders invalid sizes as an empty label', () => {
+        expect(formatFileSize(-1)).toBe('');
+        expect(formatFileSize(Number.POSITIVE_INFINITY)).toBe('');
     });
 });

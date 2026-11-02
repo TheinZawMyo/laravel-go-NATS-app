@@ -5,6 +5,7 @@ import { computed, onBeforeUnmount, onMounted, watch } from 'vue';
 import ConnectionStatus from '@/components/chat/ConnectionStatus.vue';
 import ConversationActionsMenu from '@/components/chat/ConversationActionsMenu.vue';
 import ConversationList from '@/components/chat/ConversationList.vue';
+import ConversationMediaDialog from '@/components/chat/ConversationMediaDialog.vue';
 import GroupInfoDialog from '@/components/chat/GroupInfoDialog.vue';
 import MessageComposer from '@/components/chat/MessageComposer.vue';
 import MessageTimeline from '@/components/chat/MessageTimeline.vue';
@@ -14,6 +15,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { useInitials } from '@/composables/useInitials';
+import { useMounted } from '@/composables/useMounted';
 import { useNow } from '@/composables/useNow';
 import { useAuth } from '@/composables/useAuth';
 import { conversationTitle, formatPresence } from '@/lib/format';
@@ -30,6 +32,7 @@ const chat = useChatStore();
 const contacts = useContactsStore();
 const realtime = useRealtimeStore();
 const { getInitials } = useInitials();
+const mounted = useMounted();
 const now = useNow();
 
 chat.initialize({
@@ -87,8 +90,10 @@ const activeAvatar = computed(
         null,
 );
 const participantOnline = computed(() => participant.value?.online === true);
+// Relative presence wording depends on the viewer's clock, so the header keeps
+// it out of the server render and only adds it once hydration is finished.
 const presenceLabel = computed(() =>
-    formatPresence(participant.value, now.value),
+    mounted.value ? formatPresence(participant.value, now.value) : null,
 );
 </script>
 
@@ -170,6 +175,8 @@ const presenceLabel = computed(() =>
                     </div>
 
                     <ConnectionStatus />
+
+                    <ConversationMediaDialog />
 
                     <PinnedMessagesDialog />
 

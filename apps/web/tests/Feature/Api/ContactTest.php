@@ -145,6 +145,43 @@ class ContactTest extends TestCase
     }
 
     /**
+     * An answered request is history: it must disappear from both sides of the
+     * pending lists, otherwise accepting looks like it did nothing.
+     */
+    public function test_answered_requests_leave_the_pending_lists(): void
+    {
+        [$actor, $target, $accepted] = $this->pendingRequest();
+        $other = User::factory()->create(['username' => 'bob']);
+        $rejected = app(ContactService::class)->sendRequest($other, $target);
+
+        app(ContactService::class)->accept($target, $accepted);
+        app(ContactService::class)->reject($target, $rejected);
+
+        $this
+            ->actingAs($target)
+            ->getJson('/api/v1/contact-requests?direction=incoming')
+            ->assertOk()
+            ->assertJsonCount(0, 'data');
+
+        $this
+            ->actingAs($actor)
+            ->getJson('/api/v1/contact-requests?direction=outgoing')
+            ->assertOk()
+            ->assertJsonCount(0, 'data');
+
+        $this
+            ->actingAs($other)
+            ->getJson('/api/v1/contact-requests?direction=outgoing')
+            ->assertOk()
+            ->assertJsonCount(0, 'data');
+
+        $this->assertDatabaseHas('contact_requests', [
+            'id' => $accepted->id,
+            'status' => 'accepted',
+        ]);
+    }
+
+    /**
      * @return array{0: User, 1: User, 2: ContactRequest}
      */
     private function pendingRequest(): array

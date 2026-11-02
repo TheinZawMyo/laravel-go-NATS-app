@@ -200,5 +200,75 @@ export function messagePreview(message: ChatMessage | null): string {
 
     const body = message.body?.trim();
 
-    return body && body.length > 0 ? body : 'No messages yet';
+    if (body && body.length > 0) {
+        return body;
+    }
+
+    const attachment = message.attachments[0];
+
+    if (attachment !== undefined) {
+        switch (attachment.kind) {
+            case 'image':
+                return '📷 Photo';
+            case 'video':
+                return '🎥 Video';
+            case 'audio':
+                return '🎵 Audio';
+            default:
+                return `📎 ${attachment.name}`;
+        }
+    }
+
+    return 'No messages yet';
+}
+
+export function formatFileSize(bytes: number): string {
+    if (!Number.isFinite(bytes) || bytes < 0) {
+        return '';
+    }
+
+    if (bytes < 1024) {
+        return `${bytes} B`;
+    }
+
+    const units = ['KB', 'MB', 'GB'];
+    let value = bytes / 1024;
+    let unit = 0;
+
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+    }
+
+    const rounded =
+        value >= 10 ? Math.round(value) : Math.round(value * 10) / 10;
+
+    return `${rounded} ${units[unit]}`;
+}
+
+/**
+ * Clip length for audio and video attachments, formatted as a media player
+ * clock (`0:07`, `4:31`, `1:02:09`). Unknown durations render as an empty
+ * string so callers can hide the label entirely.
+ */
+export function formatDuration(milliseconds: number | null): string {
+    if (
+        milliseconds === null ||
+        !Number.isFinite(milliseconds) ||
+        milliseconds <= 0
+    ) {
+        return '';
+    }
+
+    const totalSeconds = Math.round(milliseconds / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    const paddedSeconds = String(seconds).padStart(2, '0');
+
+    if (hours > 0) {
+        return `${hours}:${String(minutes).padStart(2, '0')}:${paddedSeconds}`;
+    }
+
+    return `${minutes}:${paddedSeconds}`;
 }

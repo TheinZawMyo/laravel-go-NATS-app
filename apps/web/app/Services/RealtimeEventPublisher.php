@@ -230,7 +230,7 @@ class RealtimeEventPublisher
 
     private function publishMessageEvent(string $eventType, Message $message): void
     {
-        $message->loadMissing(['sender', 'replyTo.sender']);
+        $message->loadMissing(['sender', 'replyTo.sender', 'attachments']);
 
         $this->publishConversationEvent(
             $eventType,

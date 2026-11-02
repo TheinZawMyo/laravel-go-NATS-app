@@ -17,8 +17,20 @@ class StoreMessageRequest extends FormRequest
         return [
             'client_message_id' => ['required', 'uuid'],
             'type' => ['sometimes', 'string', Rule::in([MessageType::Text->value])],
-            'body' => ['required', 'string', 'max:'.MessageService::MAX_BODY_LENGTH],
+            'body' => ['required_without:attachment_ids', 'nullable', 'string', 'max:'.MessageService::MAX_BODY_LENGTH],
+            'attachment_ids' => ['sometimes', 'array', 'max:10'],
+            'attachment_ids.*' => ['uuid', 'exists:message_attachments,id'],
             'reply_to_message_id' => ['nullable', 'uuid', 'exists:messages,id'],
+        ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return [
+            'body.required_without' => __('A message body or at least one attachment is required.'),
         ];
     }
 

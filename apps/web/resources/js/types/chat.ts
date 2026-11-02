@@ -8,6 +8,25 @@ export type MessageType = 'text' | 'system';
 
 export type MessageStatus = 'sending' | 'sent' | 'failed';
 
+export type AttachmentKind = 'image' | 'video' | 'audio' | 'file';
+
+export type MessageAttachment = {
+    id: string;
+    message_id: string | null;
+    name: string;
+    mime_type: string;
+    kind: AttachmentKind;
+    size_bytes: number;
+    width: number | null;
+    height: number | null;
+    duration_ms: number | null;
+    url: string | null;
+    thumbnail_url: string | null;
+    created_at: string;
+    /** Gallery rows carry the seq of the message they belong to. */
+    message_seq?: number | null;
+};
+
 export type ContactRequestStatus =
     | 'pending'
     | 'accepted'
@@ -24,6 +43,7 @@ export type ChatMessage = {
     sender: PublicUser;
     type: MessageType;
     body: string | null;
+    attachments: MessageAttachment[];
     reply_to: ChatMessage | null;
     edited_at: string | null;
     deleted_at: string | null;
@@ -117,6 +137,14 @@ export type ConversationInvite = {
 
 export type MessagePage = {
     data: ChatMessage[];
+    meta: {
+        has_more: boolean;
+        next_cursor: number | null;
+    };
+};
+
+export type MediaPage = {
+    data: MessageAttachment[];
     meta: {
         has_more: boolean;
         next_cursor: number | null;

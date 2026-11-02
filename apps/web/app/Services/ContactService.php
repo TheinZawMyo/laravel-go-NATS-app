@@ -152,12 +152,19 @@ class ContactService
     }
 
     /**
+     * Pending requests only: an answered request stays in the table as history,
+     * but it must never surface again. Listing every status made an accepted or
+     * rejected request reappear as soon as the client refetched (the realtime
+     * `contact.request.updated` event triggers exactly that), which looked like
+     * the response had not been saved.
+     *
      * @return Collection<int, ContactRequest>
      */
     public function requestsFor(User $actor, string $direction = 'incoming'): Collection
     {
         $query = ContactRequest::query()
             ->with(['sender', 'receiver'])
+            ->where('status', ContactRequestStatus::Pending)
             ->orderByDesc('created_at');
 
         $query = match ($direction) {

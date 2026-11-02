@@ -2,7 +2,11 @@
 import { computed, ref } from 'vue';
 import {
     CheckCheck,
+    FileText,
+    Film,
+    Image as ImageIcon,
     MoreHorizontal,
+    Music,
     Pencil,
     Pin,
     PinOff,
@@ -22,10 +26,14 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/composables/useAuth';
 import { useInitials } from '@/composables/useInitials';
-import { formatMessageTime } from '@/lib/format';
+import {
+    formatDuration,
+    formatFileSize,
+    formatMessageTime,
+} from '@/lib/format';
 import { ApiError } from '@/lib/http';
 import { useChatStore } from '@/stores/chat';
-import type { ChatMessage } from '@/types';
+import type { ChatMessage, MessageAttachment } from '@/types';
 
 const props = withDefaults(
     defineProps<{
@@ -52,6 +60,29 @@ const pinned = computed(() =>
     chat.isPinned(props.message.conversation_id, props.message.id),
 );
 const canTogglePin = computed(() => chat.canPin() && !isDeleted.value);
+
+const visibleAttachments = computed(() =>
+    isDeleted.value ? [] : props.message.attachments,
+);
+
+const hasBody = computed(() => {
+    const body = props.message.body;
+
+    return body !== null && body.trim() !== '';
+});
+
+function attachmentIcon(kind: MessageAttachment['kind']): typeof FileText {
+    switch (kind) {
+        case 'image':
+            return ImageIcon;
+        case 'video':
+            return Film;
+        case 'audio':
+            return Music;
+        default:
+            return FileText;
+    }
+}
 
 /**
  * Direct conversations have at most two members, so "the highest cursor of
@@ -216,6 +247,127 @@ async function remove(): Promise<void> {
                     </div>
                 </div>
 
+                <div
+                    v-if="visibleAttachments.length > 0"
+                    class="space-y-2"
+                    :class="hasBody ? 'mb-2' : ''"
+                >
+                    <template
+                        v-for="attachment in visibleAttachments"
+                        :key="attachment.id"
+                    >
+                        <a
+                            v-if="
+                                attachment.kind === 'image' &&
+                                attachment.url !== null
+                            "
+                            :href="attachment.url"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="block overflow-hidden rounded-xl"
+                        >
+                            <img
+                                :src="
+                                    attachment.thumbnail_url ?? attachment.url
+                                "
+                                :alt="attachment.name"
+                                loading="lazy"
+                                class="max-h-72 w-full max-w-80 object-cover"
+                            />
+                        </a>
+
+                        <div
+                            v-else-if="
+                                attachment.kind === 'video' &&
+                                attachment.url !== null
+                            "
+                            class="relative"
+                        >
+                            <video
+                                :src="attachment.url"
+                                :poster="attachment.thumbnail_url ?? undefined"
+                                controls
+                                preload="metadata"
+                                class="max-h-72 w-full max-w-80 rounded-xl"
+                            />
+                            <span
+                                v-if="
+                                    formatDuration(attachment.duration_ms) !==
+                                    ''
+                                "
+                                class="pointer-events-none absolute top-1.5 right-1.5 rounded-full bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white"
+                            >
+                                {{ formatDuration(attachment.duration_ms) }}
+                            </span>
+                        </div>
+
+                        <div
+                            v-else-if="
+                                attachment.kind === 'audio' &&
+                                attachment.url !== null
+                            "
+                            class="flex w-64 max-w-full flex-col gap-0.5"
+                        >
+                            <audio
+                                :src="attachment.url"
+                                controls
+                                preload="metadata"
+                                class="w-full"
+                            />
+                            <span
+                                v-if="
+                                    formatDuration(attachment.duration_ms) !==
+                                    ''
+                                "
+                                class="pl-1 text-[11px] text-muted-foreground"
+                            >
+                                {{ formatDuration(attachment.duration_ms) }}
+                            </span>
+                        </div>
+
+                        <component
+                            :is="attachment.url !== null ? 'a' : 'span'"
+                            v-else
+                            class="inline-flex max-w-full items-center gap-2.5 rounded-xl border border-border/60 bg-background/60 px-3 py-2 text-xs"
+                            :href="
+                                attachment.url !== null
+                                    ? attachment.url
+                                    : undefined
+                            "
+                            :target="
+                                attachment.url !== null ? '_blank' : undefined
+                            "
+                            :rel="
+                                attachment.url !== null
+                                    ? 'noopener noreferrer'
+                                    : undefined
+                            "
+                            :download="
+                                attachment.url !== null
+                                    ? attachment.name
+                                    : undefined
+                            "
+                        >
+                            <component
+                                :is="attachmentIcon(attachment.kind)"
+                                class="size-4 shrink-0 text-muted-foreground"
+                            />
+                            <span class="min-w-0">
+                                <span
+                                    class="block max-w-48 truncate font-medium"
+                                >
+                                    {{ attachment.name }}
+                                </span>
+                                <span
+                                    class="block text-[11px] text-muted-foreground"
+                                >
+                                    {{ formatFileSize(attachment.size_bytes) }}
+                                </span>
+                            </span>
+                        </component>
+                    </template>
+                </div>
+
                 <p v-if="isDeleted" class="italic opacity-70">
                     This message was deleted.
                 </p>
@@ -252,7 +404,7 @@ async function remove(): Promise<void> {
                     </div>
                 </form>
 
-                <p v-else class="break-words whitespace-pre-wrap">
+                <p v-else-if="hasBody" class="break-words whitespace-pre-wrap">
                     {{ message.body }}
                 </p>
             </div>

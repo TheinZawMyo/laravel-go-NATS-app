@@ -7,6 +7,8 @@ import type {
     Conversation,
     ConversationInvite,
     ConversationRole,
+    MediaPage,
+    MessageAttachment,
     MessagePage,
     MessagePin,
     MessageStatus,
@@ -112,6 +114,13 @@ function roleRank(role: ConversationRole | null | undefined): number {
     }
 }
 
+/**
+ * Gallery page size. The timeline pages through messages with the server
+ * default; the media panel asks explicitly so the grid fills a few rows at a
+ * time instead of loading an entire conversation's history at once.
+ */
+const MEDIA_PAGE_SIZE = 40;
+
 async function messageRequest(
     url: string,
     options: Parameters<typeof apiRequest>[1],
@@ -147,6 +156,16 @@ export const useChatStore = defineStore('chat', () => {
     /** Pinned messages per conversation, loaded lazily by the pins panel. */
     const pins = ref<Record<string, MessagePin[]>>({});
     const loadingPins = ref(false);
+
+    /**
+     * Shared media per conversation, loaded lazily by the media gallery. The
+     * rows are newest message first, so `mediaCursor` is the seq of the oldest
+     * message already loaded and doubles as the `before_seq` page cursor.
+     */
+    const media = ref<Record<string, MessageAttachment[]>>({});
+    const mediaCursor = ref<Record<string, number | null>>({});
+    const mediaHasMore = ref<Record<string, boolean>>({});
+    const loadingMedia = ref(false);
 
     /** Invite links per group, loaded lazily by the group info dialog. */
     const invites = ref<Record<string, ConversationInvite[]>>({});
@@ -421,6 +440,9 @@ export const useChatStore = defineStore('chat', () => {
         delete appliedSeq.value[conversationId];
         delete pins.value[conversationId];
         delete invites.value[conversationId];
+        delete media.value[conversationId];
+        delete mediaCursor.value[conversationId];
+        delete mediaHasMore.value[conversationId];
 
         if (activeConversationId.value === conversationId) {
             closeConversation();
@@ -709,6 +731,7 @@ export const useChatStore = defineStore('chat', () => {
     async function sendMessage(
         body: string,
         replyToId: string | null = null,
+        attachments: MessageAttachment[] = [],
     ): Promise<ChatMessage | null> {
         const conversation = activeConversation.value;
         const sender = auth.user;
@@ -719,7 +742,7 @@ export const useChatStore = defineStore('chat', () => {
 
         const trimmed = body.trim();
 
-        if (trimmed === '') {
+        if (trimmed === '' && attachments.length === 0) {
             return null;
         }
 
@@ -737,7 +760,8 @@ export const useChatStore = defineStore('chat', () => {
             client_message_id: clientMessageId,
             sender: sender as PublicUser,
             type: 'text',
-            body: trimmed,
+            body: trimmed === '' ? null : trimmed,
+            attachments,
             reply_to:
                 messages.value.find((message) => message.id === replyToId) ??
                 null,
@@ -761,6 +785,9 @@ export const useChatStore = defineStore('chat', () => {
                     body: {
                         client_message_id: clientMessageId,
                         body: trimmed,
+                        attachment_ids: attachments.map(
+                            (attachment) => attachment.id,
+                        ),
                         reply_to_message_id: replyToId,
                     },
                 },
@@ -789,7 +816,14 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     async function retryMessage(message: ChatMessage): Promise<void> {
-        if (message.status !== 'failed' || message.body === null) {
+        const attachmentIds = message.attachments.map(
+            (attachment) => attachment.id,
+        );
+
+        if (
+            message.status !== 'failed' ||
+            (message.body === null && attachmentIds.length === 0)
+        ) {
             return;
         }
 
@@ -803,7 +837,8 @@ export const useChatStore = defineStore('chat', () => {
                     method: 'POST',
                     body: {
                         client_message_id: message.client_message_id,
-                        body: message.body,
+                        body: message.body ?? '',
+                        attachment_ids: attachmentIds,
                         reply_to_message_id: message.reply_to?.id ?? null,
                     },
                 },
@@ -1086,6 +1121,77 @@ export const useChatStore = defineStore('chat', () => {
         void fetchPins(conversationId);
     }
 
+    function mediaFor(conversationId: string | null): MessageAttachment[] {
+        return conversationId === null
+            ? []
+            : (media.value[conversationId] ?? []);
+    }
+
+    function mediaHasMoreFor(conversationId: string | null): boolean {
+        return conversationId === null
+            ? false
+            : (mediaHasMore.value[conversationId] ?? false);
+    }
+
+    /**
+     * Page through the shared media gallery. `reset` reloads from the newest
+     * attachment; otherwise the request continues where the last page stopped.
+     * The API cannot answer with duplicates, but a retry after a partial
+     * failure can, so ids already in memory are skipped.
+     */
+    async function fetchMedia(
+        conversationId: string,
+        reset = false,
+    ): Promise<void> {
+        if (loadingMedia.value) {
+            return;
+        }
+
+        loadingMedia.value = true;
+
+        try {
+            const beforeSeq = reset
+                ? null
+                : (mediaCursor.value[conversationId] ?? null);
+            const params = new URLSearchParams({
+                limit: String(MEDIA_PAGE_SIZE),
+            });
+
+            if (beforeSeq !== null) {
+                params.set('before_seq', String(beforeSeq));
+            }
+
+            const page = await apiRequest<MediaPage>(
+                `/api/v1/conversations/${conversationId}/media?${params.toString()}`,
+            );
+
+            const existing = reset ? [] : (media.value[conversationId] ?? []);
+            const seen = new Set(existing.map((item) => item.id));
+            const merged = [...existing];
+
+            for (const item of page.data) {
+                if (!seen.has(item.id)) {
+                    seen.add(item.id);
+                    merged.push(item);
+                }
+            }
+
+            media.value = { ...media.value, [conversationId]: merged };
+            mediaHasMore.value = {
+                ...mediaHasMore.value,
+                [conversationId]: page.meta.has_more,
+            };
+            mediaCursor.value = {
+                ...mediaCursor.value,
+                [conversationId]: page.meta.next_cursor,
+            };
+        } catch (requestError) {
+            error.value = errorMessage(requestError);
+        } finally {
+            loadingMedia.value = false;
+        }
+    }
+
     async function fetchInvites(conversationId: string): Promise<void> {
         loadingInvites.value = true;
 
@@ -1169,6 +1275,11 @@ export const useChatStore = defineStore('chat', () => {
         replyTo,
         pins,
         loadingPins,
+        media,
+        loadingMedia,
+        fetchMedia,
+        mediaFor,
+        mediaHasMoreFor,
         invites,
         loadingInvites,
         loadingConversations,

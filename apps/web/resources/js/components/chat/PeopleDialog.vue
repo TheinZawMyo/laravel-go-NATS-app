@@ -114,8 +114,16 @@ function incomingFor(username: string): ContactRequest | undefined {
     );
 }
 
+/**
+ * The store is the fresher source for this session: answering a request
+ * updates it right away, while `relationship` is baked into the search response
+ * and stays stale until the term is searched again. The server value therefore
+ * only wins when the store knows nothing (for example before the first load).
+ */
 function relationshipOf(user: PublicUser): UserRelationship {
-    return user.relationship ?? contacts.relationshipFor(user.username);
+    const known = contacts.relationshipFor(user.username);
+
+    return known === 'none' ? (user.relationship ?? 'none') : known;
 }
 
 async function startChat(username: string): Promise<void> {

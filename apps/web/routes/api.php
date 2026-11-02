@@ -4,14 +4,17 @@ use App\Http\Controllers\Api\V1\BlockController;
 use App\Http\Controllers\Api\V1\ContactController;
 use App\Http\Controllers\Api\V1\ContactRequestController;
 use App\Http\Controllers\Api\V1\ConversationController;
+use App\Http\Controllers\Api\V1\ConversationMediaController;
 use App\Http\Controllers\Api\V1\DeviceController;
 use App\Http\Controllers\Api\V1\GatewayTokenController;
 use App\Http\Controllers\Api\V1\GroupController;
 use App\Http\Controllers\Api\V1\GroupInviteController;
 use App\Http\Controllers\Api\V1\GroupMemberController;
 use App\Http\Controllers\Api\V1\MeController;
+use App\Http\Controllers\Api\V1\MessageAttachmentController;
 use App\Http\Controllers\Api\V1\MessageController;
 use App\Http\Controllers\Api\V1\MessagePinController;
+use App\Http\Controllers\Api\V1\UploadController;
 use App\Http\Controllers\Api\V1\UserController;
 use Illuminate\Support\Facades\Route;
 
@@ -70,4 +73,22 @@ Route::middleware(['web', 'auth'])->prefix('v1')->group(function () {
     Route::post('conversations/{conversation}/messages', [MessageController::class, 'store'])->name('api.v1.messages.store');
     Route::patch('messages/{message}', [MessageController::class, 'update'])->name('api.v1.messages.update');
     Route::delete('messages/{message}', [MessageController::class, 'destroy'])->name('api.v1.messages.destroy');
+
+    Route::get('conversations/{conversation}/media', [ConversationMediaController::class, 'index'])->name('api.v1.conversations.media');
+    Route::get('messages/{message}/attachments/{attachment}', [MessageAttachmentController::class, 'download'])->name('api.v1.attachments.download');
+
+    Route::post('uploads/presign', [UploadController::class, 'presign'])
+        ->middleware('throttle:uploads')
+        ->name('api.v1.uploads.presign');
+});
+
+/*
+ | The presigned upload receiver is authenticated by the URL signature rather
+ | than by the session, so it lives outside the auth group. CSRF is exempted
+ | for it in bootstrap/app.php for the same reason.
+ */
+Route::middleware(['web'])->prefix('v1')->group(function (): void {
+    Route::put('uploads/{upload}', [UploadController::class, 'receive'])
+        ->middleware('throttle:upload-receive')
+        ->name('api.v1.uploads.receive');
 });

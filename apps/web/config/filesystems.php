@@ -47,6 +47,19 @@ return [
             'report' => false,
         ],
 
+        /*
+         | Private attachment storage. This disk is never served directly by
+         | the framework: bytes leave the app only through the authorized
+         | download endpoint, which enforces conversation membership.
+         */
+        'media' => [
+            'driver' => 'local',
+            'root' => env('MEDIA_DISK_ROOT', storage_path('app/media')),
+            'serve' => false,
+            'throw' => false,
+            'report' => false,
+        ],
+
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),

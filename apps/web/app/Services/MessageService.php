@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Conversation;
 use App\Models\Message;
+use App\Models\MessageAttachment;
 use App\Models\MessageEdit;
 use App\Models\MessagePin;
 use App\Models\User;
@@ -29,6 +30,7 @@ class MessageService
     public function __construct(
         private readonly RealtimeEventPublisher $events,
         private readonly ContactService $contacts,
+        private readonly UploadService $uploads,
     ) {}
 
     /**
@@ -54,7 +56,7 @@ class MessageService
 
         $query = $conversation->messages()
             ->withTrashed()
-            ->with(['sender', 'replyTo.sender'])
+            ->with(['sender', 'replyTo.sender', 'attachments'])
             ->orderByDesc('seq');
 
         if ($historyFromSeq > 0) {
@@ -80,16 +82,20 @@ class MessageService
     /**
      * Persist a message transactionally and allocate its conversation sequence.
      *
-     * @param  array{client_message_id: string, body: string, type?: string, reply_to_message_id?: string|null}  $data
+     * @param  array{client_message_id: string, body?: string, attachment_ids?: list<string>, type?: string, reply_to_message_id?: string|null}  $data
      * @return array{0: Message, 1: bool} The message and whether it was newly created.
      */
     public function send(User $sender, Conversation $conversation, array $data): array
     {
-        $body = trim($data['body']);
+        $body = trim($data['body'] ?? '');
+        $attachmentIds = array_values(array_unique(array_map(
+            'strval',
+            $data['attachment_ids'] ?? [],
+        )));
 
-        if ($body === '') {
+        if ($body === '' && $attachmentIds === []) {
             throw ValidationException::withMessages([
-                'body' => __('A message body is required.'),
+                'body' => __('A message body or at least one attachment is required.'),
             ]);
         }
 
@@ -104,7 +110,7 @@ class MessageService
         }
 
         try {
-            return DB::transaction(function () use ($sender, $conversation, $clientMessageId, $body, $replyToMessageId, $type): array {
+            return DB::transaction(function () use ($sender, $conversation, $clientMessageId, $body, $replyToMessageId, $type, $attachmentIds): array {
                 $lockedConversation = Conversation::query()
                     ->lockForUpdate()
                     ->findOrFail($conversation->id);
@@ -121,6 +127,8 @@ class MessageService
 
                 $this->assertNotBlocked($sender, $lockedConversation);
 
+                $attachments = $this->uploads->claimForMessage($sender, $attachmentIds);
+
                 $seq = (int) $lockedConversation->next_message_seq + 1;
 
                 $message = Message::query()->create([
@@ -129,9 +137,22 @@ class MessageService
                     'sender_id' => $sender->id,
                     'client_message_id' => $clientMessageId,
                     'type' => $type,
-                    'body' => $body,
+                    'body' => $body === '' ? null : $body,
                     'reply_to_message_id' => $replyToMessageId,
                 ]);
+
+                if ($attachments !== []) {
+                    MessageAttachment::query()
+                        ->whereKey(array_map(
+                            fn (MessageAttachment $attachment): string => $attachment->id,
+                            $attachments,
+                        ))
+                        ->update([
+                            'message_id' => $message->id,
+                            'expires_at' => null,
+                            'updated_at' => Carbon::now(),
+                        ]);
+                }
 
                 $lockedConversation->forceFill([
                     'next_message_seq' => $seq,
@@ -147,7 +168,7 @@ class MessageService
                         'updated_at' => Carbon::now(),
                     ]);
 
-                $message = $message->load(['sender', 'replyTo.sender']);
+                $message = $message->load(['sender', 'replyTo.sender', 'attachments']);
 
                 // Same transaction as the insert: the event exists if and only
                 // if the message was committed.
@@ -247,7 +268,7 @@ class MessageService
     public function pins(Conversation $conversation): Collection
     {
         return MessagePin::query()
-            ->with(['message.sender', 'message.replyTo.sender', 'pinnedBy'])
+            ->with(['message.sender', 'message.replyTo.sender', 'message.attachments', 'pinnedBy'])
             ->where('conversation_id', $conversation->id)
             ->orderByDesc('pinned_at')
             ->get();
@@ -322,7 +343,7 @@ class MessageService
     private function findPin(Message $message): ?MessagePin
     {
         return MessagePin::query()
-            ->with(['message.sender', 'message.replyTo.sender', 'pinnedBy'])
+            ->with(['message.sender', 'message.replyTo.sender', 'message.attachments', 'pinnedBy'])
             ->where('conversation_id', $message->conversation_id)
             ->where('message_id', $message->id)
             ->first();
@@ -345,7 +366,7 @@ class MessageService
             ]);
         }
 
-        return $message->load(['sender', 'replyTo.sender']);
+        return $message->load(['sender', 'replyTo.sender', 'attachments']);
     }
 
     /**
