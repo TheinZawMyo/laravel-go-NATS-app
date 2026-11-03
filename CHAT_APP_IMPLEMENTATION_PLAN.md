@@ -450,28 +450,28 @@ Improve discovery, user safety, and account/privacy controls.
 
 ## Testing
 
-- [ ] Laravel feature and policy tests using Pest.
-- [ ] Vue component tests using Vitest and Vue Test Utils.
-- [ ] Browser end-to-end tests using Playwright.
-- [ ] Go unit and integration tests.
-- [ ] WebSocket protocol and reconnect tests.
-- [ ] Broker retry and duplicate-event tests.
+- [x] Laravel feature and policy tests using Pest. (existing API, auth, moderation, privacy, and policy coverage)
+- [x] Vue component tests using Vitest and Vue Test Utils. (components, stores, realtime, and formatting)
+- [x] Browser end-to-end tests using Playwright. (guest landing page and protected-route smoke test; CI provisions Chromium)
+- [x] Go unit and integration tests. (gateway protocol/server and worker outbox/config packages)
+- [x] WebSocket protocol and reconnect tests. (protocol, token/idempotency, and history resync coverage)
+- [x] Broker retry and duplicate-event tests. (outbox retry/JetStream and gateway dedupe coverage)
 - [ ] Database migration and restore tests.
 - [ ] Load tests for concurrent WebSocket connections and message throughput.
-- [ ] Security tests for authorization bypass, XSS, CSRF, upload validation, and rate limiting.
+- [ ] Security tests for authorization bypass, XSS, CSRF, upload validation, and rate limiting. (policy/API/upload/auth coverage exists; dedicated XSS and sustained rate-limit penetration coverage remains needed)
 
 ## Operations
 
-- [ ] Configure TLS and Nginx WebSocket proxying.
-- [ ] Configure health checks and graceful shutdown.
-- [ ] Configure structured logs and request/event correlation IDs.
-- [ ] Add Prometheus metrics and Grafana dashboards if self-hosted monitoring is chosen.
+- [ ] Configure TLS and Nginx WebSocket proxying. (Nginx proxy example added; certificate issuance and deployment wiring are environment-specific)
+- [x] Configure health checks and graceful shutdown. (Go liveness/readiness endpoints and graceful gateway draining are implemented)
+- [ ] Configure structured logs and request/event correlation IDs. (Go services have structured logs; end-to-end correlation and Laravel coverage remain)
+- [ ] Add Prometheus metrics and Grafana dashboards if self-hosted monitoring is chosen. (service metrics endpoints exist; dashboards and alerts remain deployment work)
 - [ ] Configure error tracking.
-- [ ] Configure database backups and test restoration.
+- [ ] Configure database backups and test restoration. (backup/restore scripts and drill procedure added; execution and offsite encrypted storage remain)
 - [ ] Configure Redis persistence/eviction policy appropriate to its role.
-- [ ] Configure broker retention, authentication, and dead-letter handling.
-- [ ] Add deployment and rollback procedures.
-- [ ] Create operational runbooks.
+- [ ] Configure broker retention, authentication, and dead-letter handling. (JetStream retention and outbox dead-letter records are implemented; production credentials/replication policy remain)
+- [x] Add deployment and rollback procedures. (see `docs/operations.md`)
+- [x] Create operational runbooks. (see `docs/operations.md`)
 
 ## Completion Criteria
 

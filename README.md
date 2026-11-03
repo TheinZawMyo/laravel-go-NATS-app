@@ -3,6 +3,7 @@
 Messenger/Telegram-style chat application built as a Laravel modular monolith with a Vue 3 + Inertia frontend, a Go WebSocket gateway, and a Go worker.
 
 See [CHAT_APP_IMPLEMENTATION_PLAN.md](CHAT_APP_IMPLEMENTATION_PLAN.md) for the full roadmap, [docs/architecture.md](docs/architecture.md) for the service layout, and [docs/websocket-protocol.md](docs/websocket-protocol.md) for the realtime contract.
+Production proxy, backup/restore, deployment, and incident procedures are in [docs/operations.md](docs/operations.md); the Nginx example and PostgreSQL scripts are under `deploy/`.
 
 ## Stack
 
@@ -238,6 +239,7 @@ go.work
 make test
 make lint
 cd apps/web && npm run test:unit
+cd apps/web && npx playwright install chromium && npm run test:e2e
 cd apps/web && npm run types:check
 ```
 

@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: db-create nats-dev minio-dev setup migrate web-dev gateway-dev worker-dev queue test lint
+.PHONY: db-create nats-dev minio-dev setup migrate web-dev gateway-dev worker-dev queue test lint test-e2e
 
 db-create:
 	createdb chat_app || true
@@ -47,3 +47,6 @@ lint:
 	cd apps/web && composer lint
 	cd apps/gateway && go vet ./...
 	cd apps/worker && go vet ./...
+
+test-e2e:
+	cd apps/web && npm run test:e2e

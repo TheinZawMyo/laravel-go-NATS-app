@@ -33,7 +33,7 @@ Vue 3 + Inertia + Tailwind + Pinia
 | Worker | `apps/worker` | 8082 | Outbox dispatch, event publishing, fan-out, notifications, cleanup |
 | PostgreSQL | — | 5432 | Permanent data and transactional outbox |
 | Redis | — | 6379 | Sessions, cache, queues, presence leases, routing, rate-limit counters |
-| NATS | — | 4222 | Event delivery between the worker and the gateways |
+| NATS JetStream | — | 4222 | Retained event delivery between the worker and the gateways |
 | MinIO | — | 9000 | Media and attachment storage |
 
 ## Rules
@@ -89,7 +89,8 @@ up on its next poll.
 | `WORKER_OUTBOX_MAX_ATTEMPTS` | 10 | Attempts before a row is treated as a dead letter |
 
 The gateways subscribe to `GATEWAY_EVENT_SUBJECT_PREFIX + ">"`, so both services
-must agree on the prefix.
+must agree on the prefix. Production must use authenticated NATS credentials
+and an appropriate replicated storage policy.
 
 
 ## Gateway connection limits

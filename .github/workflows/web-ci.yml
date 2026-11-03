@@ -58,3 +58,25 @@ jobs:
 
       - name: Run frontend unit tests
         run: npm run test:unit
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser smoke tests
+        env:
+          DB_CONNECTION: sqlite
+          DB_DATABASE: database/e2e.sqlite
+          CACHE_STORE: array
+          SESSION_DRIVER: array
+          QUEUE_CONNECTION: sync
+        run: |
+          touch database/e2e.sqlite
+          php artisan migrate --force
+          php artisan serve --host 127.0.0.1 --port 8000 > /tmp/chat-app-e2e.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:8000/ >/dev/null; then break; fi
+            sleep 1
+          done
+          APP_URL=http://127.0.0.1:8000 npm run test:e2e
