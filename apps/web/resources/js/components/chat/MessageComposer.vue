@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, reactive, ref } from 'vue';
 import {
     CornerUpLeft,
+    Clock3,
     FaceGrinning,
     Image as ImageIcon,
     Mic,
@@ -20,6 +21,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { Textarea } from '@/components/ui/textarea';
 import { useAppearance } from '@/composables/useAppearance';
 import { formatDuration, formatFileSize } from '@/lib/format';
+import { apiRequest } from '@/lib/http';
 import { MAX_UPLOAD_BYTES, uploadFile } from '@/lib/upload';
 import { useChatStore } from '@/stores/chat';
 import { useRealtimeStore } from '@/stores/realtime';
@@ -50,6 +52,9 @@ const uploads = ref<PendingUpload[]>([]);
 const fileInput = ref<HTMLInputElement | null>(null);
 const imageInput = ref<HTMLInputElement | null>(null);
 const audioInput = ref<HTMLInputElement | null>(null);
+const showScheduler = ref(false);
+const scheduledFor = ref('');
+const scheduling = ref(false);
 
 /**
  * Voice messages are recorded in the browser with MediaRecorder and then
@@ -101,6 +106,91 @@ const canSend = computed(
         !chat.sending &&
         (draft.value.trim() !== '' || readyUploads.value.length > 0),
 );
+const canSchedule = computed(
+    () =>
+        !scheduling.value &&
+        !chat.sending &&
+        draft.value.trim() !== '' &&
+        chat.replyTo === null &&
+        uploads.value.length === 0,
+);
+const scheduleMinimum = ref(
+    localDateTimeValue(new Date(Date.now() + 60_000)),
+);
+
+function localDateTimeValue(date: Date): string {
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+
+    return local.toISOString().slice(0, 16);
+}
+
+function newClientMessageId(): string {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+        return crypto.randomUUID();
+    }
+
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+        const value = Math.floor(Math.random() * 16);
+
+        return (char === 'x' ? value : (value & 0x3) | 0x8).toString(16);
+    });
+}
+
+async function scheduleDraft(): Promise<void> {
+    if (
+        !canSchedule.value ||
+        chat.activeConversation === null ||
+        scheduledFor.value === ''
+    ) {
+        return;
+    }
+
+    const sendAt = new Date(scheduledFor.value);
+
+    if (Number.isNaN(sendAt.getTime()) || sendAt.getTime() < Date.now() + 60_000) {
+        toast.error('Choose a time at least one minute from now.');
+
+        return;
+    }
+
+    scheduling.value = true;
+
+    try {
+        await apiRequest(`/api/v1/conversations/${chat.activeConversation.id}/scheduled-messages`, {
+            method: 'POST',
+            body: {
+                client_message_id: newClientMessageId(),
+                body: draft.value.trim(),
+                send_at: sendAt.toISOString(),
+            },
+        });
+        draft.value = '';
+        showScheduler.value = false;
+        scheduledFor.value = '';
+        chat.setReplyTo(null);
+        toast.success('Message scheduled.');
+    } catch {
+        toast.error('Could not schedule this message. Please try again.');
+    } finally {
+        scheduling.value = false;
+    }
+}
+
+function openScheduler(): void {
+    showScheduler.value = !showScheduler.value;
+
+    if (showScheduler.value) {
+        scheduleMinimum.value = localDateTimeValue(
+            new Date(Date.now() + 60_000),
+        );
+
+        if (scheduledFor.value === '') {
+            scheduledFor.value = localDateTimeValue(
+                new Date(Date.now() + 60 * 60_000),
+            );
+        }
+    }
+}
 
 const commonStickers = [
     '🐶',
@@ -557,6 +647,38 @@ onBeforeUnmount(() => {
             class="relative mx-auto flex max-w-4xl flex-col gap-2"
             @submit.prevent="submit"
         >
+            <div
+                v-if="showScheduler"
+                class="flex flex-wrap items-end gap-2 rounded-xl border border-border/70 bg-background p-3"
+            >
+                <label class="flex min-w-48 flex-1 flex-col gap-1 text-xs text-muted-foreground">
+                    Send at
+                    <input
+                        v-model="scheduledFor"
+                        type="datetime-local"
+                        :min="scheduleMinimum"
+                        class="h-9 rounded-lg border border-border bg-background px-2 text-sm text-foreground"
+                    />
+                </label>
+                <Button
+                    type="button"
+                    size="sm"
+                    class="bg-chat-accent text-white hover:bg-chat-accent/90"
+                    :disabled="!canSchedule || scheduledFor === ''"
+                    @click="scheduleDraft"
+                >
+                    {{ scheduling ? 'Scheduling…' : 'Schedule message' }}
+                </Button>
+                <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    @click="showScheduler = false"
+                >
+                    Cancel
+                </Button>
+            </div>
+
             <div v-if="uploads.length > 0" class="flex flex-wrap gap-2 px-1">
                 <div
                     v-for="upload in uploads"
@@ -732,6 +854,18 @@ onBeforeUnmount(() => {
                     "
                     @keydown.enter.exact.prevent="submit"
                 />
+
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    class="shrink-0 text-muted-foreground hover:text-chat-accent"
+                    aria-label="Schedule message"
+                    :disabled="!canSchedule"
+                    @click="openScheduler"
+                >
+                    <Clock3 />
+                </Button>
 
                 <Button
                     type="submit"

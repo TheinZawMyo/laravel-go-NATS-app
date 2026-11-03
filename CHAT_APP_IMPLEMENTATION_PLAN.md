@@ -494,7 +494,7 @@ Only start these after the core messaging flow is reliable.
 - [ ] Screen sharing.
 - [ ] End-to-end encryption (E2EE).
 - [ ] Disappearing messages.
-- [ ] Message scheduling.
+- [x] Message scheduling. (text messages can be scheduled up to 30 days ahead, listed/cancelled by their sender, and dispatched through Laravel's scheduler)
 - [ ] Threaded replies.
 - [ ] Advanced message search.
 - [ ] Multi-device session improvements.
@@ -657,6 +657,9 @@ For a browser-first Inertia app, prefer Laravel session authentication with secu
 | GET | `/api/v1/conversations/{id}` | Conversation details |
 | GET | `/api/v1/conversations/{id}/messages?before_seq=...` | Fetch older messages |
 | POST | `/api/v1/conversations/{id}/messages` | Send message |
+| GET | `/api/v1/conversations/{id}/scheduled-messages` | List the current user's pending scheduled messages |
+| POST | `/api/v1/conversations/{id}/scheduled-messages` | Schedule a text message (up to 30 days ahead) |
+| DELETE | `/api/v1/scheduled-messages/{id}` | Cancel a pending scheduled message |
 | PATCH | `/api/v1/messages/{id}` | Edit message |
 | DELETE | `/api/v1/messages/{id}` | Delete message |
 | POST | `/api/v1/messages/{id}/reactions` | Add reaction |

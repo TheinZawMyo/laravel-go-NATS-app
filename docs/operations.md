@@ -12,10 +12,12 @@ proxy configuration is in [`deploy/nginx/chat-app.conf`](../deploy/nginx/chat-ap
 3. Deploy the web artifact in maintenance mode or behind the load balancer.
 4. Run `php artisan migrate --force` once as a controlled deployment step.
 5. Deploy the gateway and worker; verify `/healthz`, `/readyz`, and `/metrics`.
-6. Warm Laravel configuration/routes/views, then restore web traffic.
-7. Verify login, direct message persistence, live delivery, reconnect/history
+6. Ensure Laravel's scheduler is running every minute so due scheduled messages
+   are dispatched along with routine cleanup commands.
+7. Warm Laravel configuration/routes/views, then restore web traffic.
+8. Verify login, direct message persistence, live delivery, reconnect/history
    recovery, authorized attachment download, and admin report queue access.
-8. Watch application errors, p95 latency, gateway connections, outbox backlog,
+9. Watch application errors, p95 latency, gateway connections, outbox backlog,
    oldest event age, NATS stream health, Redis evictions, and database capacity.
 
 For rollback, redeploy the prior immutable application artifacts. Do not

@@ -10,3 +10,4 @@ Artisan::command('inspire', function () {
 
 Schedule::command('media:prune-uploads')->daily();
 Schedule::command('media:purge-attachments')->daily();
+Schedule::command('messages:dispatch-scheduled')->everyMinute()->withoutOverlapping();

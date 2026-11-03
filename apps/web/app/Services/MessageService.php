@@ -7,6 +7,7 @@ use App\Models\Message;
 use App\Models\MessageAttachment;
 use App\Models\MessageEdit;
 use App\Models\MessagePin;
+use App\Models\ScheduledMessage;
 use App\Models\User;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
@@ -102,6 +103,17 @@ class MessageService
         $clientMessageId = $data['client_message_id'];
         $replyToMessageId = $data['reply_to_message_id'] ?? null;
         $type = $data['type'] ?? 'text';
+
+        $scheduled = ScheduledMessage::query()
+            ->where('sender_id', $sender->id)
+            ->where('client_message_id', $clientMessageId)
+            ->first();
+
+        if ($scheduled !== null && $scheduled->status !== 'dispatching') {
+            throw ValidationException::withMessages([
+                'client_message_id' => __('This client message identifier is reserved by a scheduled message.'),
+            ]);
+        }
 
         $existing = $this->findByIdempotencyKey($sender, $clientMessageId);
 

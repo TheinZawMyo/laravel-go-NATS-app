@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\V1\MessageAttachmentController;
 use App\Http\Controllers\Api\V1\MessageController;
 use App\Http\Controllers\Api\V1\MessagePinController;
 use App\Http\Controllers\Api\V1\SearchController;
+use App\Http\Controllers\Api\V1\ScheduledMessageController;
 use App\Http\Controllers\Api\V1\UploadController;
 use App\Http\Controllers\Api\V1\UserController;
 use App\Http\Controllers\Api\V1\UserReportController;
@@ -95,6 +96,13 @@ Route::middleware(['web', 'auth'])->prefix('v1')->group(function () {
     Route::post('conversations/{conversation}/messages', [MessageController::class, 'store'])
         ->middleware('throttle:messages')
         ->name('api.v1.messages.store');
+    Route::get('conversations/{conversation}/scheduled-messages', [ScheduledMessageController::class, 'index'])
+        ->name('api.v1.scheduled-messages.index');
+    Route::post('conversations/{conversation}/scheduled-messages', [ScheduledMessageController::class, 'store'])
+        ->middleware('throttle:messages')
+        ->name('api.v1.scheduled-messages.store');
+    Route::delete('scheduled-messages/{scheduledMessage}', [ScheduledMessageController::class, 'destroy'])
+        ->name('api.v1.scheduled-messages.destroy');
     Route::patch('messages/{message}', [MessageController::class, 'update'])->name('api.v1.messages.update');
     Route::delete('messages/{message}', [MessageController::class, 'destroy'])->name('api.v1.messages.destroy');
 

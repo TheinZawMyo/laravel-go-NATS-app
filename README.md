@@ -187,6 +187,19 @@ Retention policy:
 - Reports, audit logs, and conversation/message history are retained until an
   account is deleted; exports are generated on demand and not stored.
 
+## Scheduled messages
+
+Authenticated clients can schedule standalone text messages (without attachments
+or reply references) with
+`POST /api/v1/conversations/{id}/scheduled-messages` using `client_message_id`,
+`body`, and an ISO 8601 `send_at` timestamp. Delivery is limited to 30 days
+ahead. Senders can list their pending messages for a conversation and cancel a
+pending item. Run `php artisan schedule:work` (or configure Laravel's scheduler
+to invoke `schedule:run` every minute) to dispatch due messages. Delivery uses
+the normal message service, so authorization, block rules, idempotency, sequence
+allocation, and outbox events are applied at send time; a message is marked
+failed if the sender leaves, is deactivated, or no longer meets message rules.
+
 ## Server-side rendering
 
 Inertia SSR is enabled in `apps/web/config/inertia.php` (`ssr.enabled = true`).
