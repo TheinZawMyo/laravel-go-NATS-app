@@ -3,10 +3,9 @@ import { computed, onMounted, ref } from 'vue';
 import { useEventListener } from '@vueuse/core';
 import { Bell, BellOff, MessagesSquare, Search } from '@lucide/vue';
 import ConnectionStatus from '@/components/chat/ConnectionStatus.vue';
-import CreateGroupDialog from '@/components/chat/CreateGroupDialog.vue';
+import ChatNavPanel from '@/components/chat/ChatNavPanel.vue';
 import NewConversationDialog from '@/components/chat/NewConversationDialog.vue';
 import SearchDialog from '@/components/chat/SearchDialog.vue';
-import PeopleDialog from '@/components/chat/PeopleDialog.vue';
 import PresenceDot from '@/components/chat/PresenceDot.vue';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -543,11 +542,6 @@ function open(conversation: Conversation): void {
             </ul>
         </div>
 
-        <div class="shrink-0 border-t border-border/60 px-4 py-3 sm:px-5">
-            <div class="flex items-center gap-2">
-                <PeopleDialog />
-                <CreateGroupDialog />
-            </div>
-        </div>
+        <ChatNavPanel />
     </div>
 </template>

@@ -12,10 +12,13 @@ import {
     Sticker,
     X,
 } from '@lucide/vue';
+import EmojiPicker from 'vue3-emoji-picker';
+import 'vue3-emoji-picker/css';
 import { toast } from 'vue-sonner';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { Textarea } from '@/components/ui/textarea';
+import { useAppearance } from '@/composables/useAppearance';
 import { formatDuration, formatFileSize } from '@/lib/format';
 import { MAX_UPLOAD_BYTES, uploadFile } from '@/lib/upload';
 import { useChatStore } from '@/stores/chat';
@@ -36,6 +39,7 @@ type PendingUpload = {
 
 const chat = useChatStore();
 const realtime = useRealtimeStore();
+const { resolvedAppearance } = useAppearance();
 
 const draft = ref('');
 const showEmoji = ref(false);
@@ -98,29 +102,6 @@ const canSend = computed(
         (draft.value.trim() !== '' || readyUploads.value.length > 0),
 );
 
-const commonEmojis = [
-    '😀',
-    '😂',
-    '😍',
-    '🥰',
-    '😎',
-    '🤔',
-    '😭',
-    '😡',
-    '👍',
-    '👎',
-    '❤️',
-    '🔥',
-    '✨',
-    '🎉',
-    '🙏',
-    '👏',
-    '💯',
-    '😊',
-    '🥳',
-    '😴',
-];
-
 const commonStickers = [
     '🐶',
     '🐱',
@@ -146,6 +127,10 @@ const commonStickers = [
 
 function insertText(value: string): void {
     draft.value = `${draft.value}${value}`;
+}
+
+function insertEmoji(emoji: { native: string }): void {
+    insertText(emoji.native);
 }
 
 function toggleEmoji(): void {
@@ -569,7 +554,7 @@ onBeforeUnmount(() => {
         </div>
 
         <form
-            class="mx-auto flex max-w-4xl flex-col gap-2"
+            class="relative mx-auto flex max-w-4xl flex-col gap-2"
             @submit.prevent="submit"
         >
             <div v-if="uploads.length > 0" class="flex flex-wrap gap-2 px-1">
@@ -804,17 +789,22 @@ onBeforeUnmount(() => {
 
             <div
                 v-if="showEmoji"
-                class="grid grid-cols-10 gap-1 rounded-2xl bg-muted/60 p-3"
+                class="absolute bottom-full left-0 z-30 mb-2 w-[280px] max-w-full"
             >
-                <button
-                    v-for="emoji in commonEmojis"
-                    :key="emoji"
-                    type="button"
-                    class="rounded-lg p-1.5 text-lg transition hover:bg-background"
-                    @click="insertText(emoji)"
+                <div
+                    class="overflow-hidden rounded-2xl border border-border/60 shadow-lg"
                 >
-                    {{ emoji }}
-                </button>
+                    <EmojiPicker
+                        set="native"
+                        :theme="resolvedAppearance"
+                        :per-line="8"
+                        :emoji-size="22"
+                        recent="recent"
+                        :max-recent="24"
+                        :auto-focus="false"
+                        @select="insertEmoji"
+                    />
+                </div>
             </div>
 
             <div
