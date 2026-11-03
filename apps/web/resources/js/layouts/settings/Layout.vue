@@ -3,6 +3,7 @@ import { Link, router, usePage } from '@inertiajs/vue3';
 import {
     ArrowLeft,
     ChevronRight,
+    Eye,
     LogOut,
     Palette,
     ShieldCheck,
@@ -31,6 +32,11 @@ const navItems: NavItem[] = [
         title: 'Security',
         href: editSecurity(),
         icon: ShieldCheck,
+    },
+    {
+        title: 'Privacy',
+        href: '/settings/privacy',
+        icon: Eye,
     },
     {
         title: 'Appearance',

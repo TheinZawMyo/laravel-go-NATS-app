@@ -114,7 +114,7 @@ class ConversationService
 
         $this->presence->annotate($conversations->flatMap(
             fn (Conversation $conversation): Collection => $conversation->members,
-        ));
+        ), $user);
 
         return $conversations->each(
             fn (Conversation $conversation): Conversation => $this->applyViewerState(
@@ -131,7 +131,7 @@ class ConversationService
 
         $unreadCounts = $this->unreadCountsFor($user, collect([$conversation->id]));
 
-        $this->presence->annotate($conversation->members);
+        $this->presence->annotate($conversation->members, $user);
 
         return $this->applyViewerState(
             $conversation,

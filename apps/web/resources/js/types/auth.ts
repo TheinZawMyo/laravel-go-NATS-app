@@ -1,4 +1,8 @@
-export type AccountStatus = 'active' | 'suspended' | 'deactivated';
+export type AccountStatus = 'active' | 'suspended' | 'banned' | 'deactivated';
+
+export type LastSeenVisibility = 'everyone' | 'contacts' | 'nobody';
+export type ProfileVisibility = 'everyone' | 'contacts';
+export type ContactRequestPolicy = 'everyone' | 'contacts' | 'nobody';
 
 export type User = {
     id: string;
@@ -9,6 +13,10 @@ export type User = {
     bio: string | null;
     status_text: string | null;
     status: AccountStatus;
+    is_admin: boolean;
+    last_seen_visibility: LastSeenVisibility;
+    profile_visibility: ProfileVisibility;
+    contact_requests_policy: ContactRequestPolicy;
     email_verified_at: string | null;
     last_seen_at: string | null;
     created_at: string;

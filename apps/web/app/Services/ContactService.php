@@ -37,6 +37,7 @@ class ContactService
     public function __construct(
         private readonly RealtimeEventPublisher $events,
         private readonly PresenceService $presence,
+        private readonly PrivacyService $privacy,
     ) {}
 
     /**
@@ -71,7 +72,9 @@ class ContactService
             ->limit(self::SEARCH_LIMIT)
             ->get();
 
-        $this->presence->annotate($users);
+        $users = $this->privacy->filterVisibleProfiles($actor, $users);
+
+        $this->presence->annotate($users, $actor);
 
         $relationships = $this->relationshipsFor($actor, $users);
 
@@ -144,7 +147,10 @@ class ContactService
             ->with('contact')
             ->get();
 
-        $this->presence->annotate($contacts->map(fn (Contact $contact): User => $contact->contact));
+        $this->presence->annotate(
+            $contacts->map(fn (Contact $contact): User => $contact->contact),
+            $actor,
+        );
 
         return $contacts->sortBy(
             fn (Contact $contact): string => Str::lower($contact->nickname ?? $contact->contact->name),
@@ -180,7 +186,7 @@ class ContactService
 
         $this->presence->annotate($requests->flatMap(
             fn (ContactRequest $request): array => [$request->sender, $request->receiver],
-        ));
+        ), $actor);
 
         return $requests;
     }
@@ -196,6 +202,12 @@ class ContactService
         if (! $target->isActive()) {
             throw ValidationException::withMessages([
                 'username' => __('This account is not available.'),
+            ]);
+        }
+
+        if (! $this->privacy->canReceiveContactRequest($actor, $target)) {
+            throw ValidationException::withMessages([
+                'username' => __('This user is not accepting contact requests.'),
             ]);
         }
 
@@ -409,7 +421,10 @@ class ContactService
             ->orderByDesc('created_at')
             ->get();
 
-        $this->presence->annotate($blocks->map(fn (UserBlock $block): User => $block->blocked));
+        $this->presence->annotate(
+            $blocks->map(fn (UserBlock $block): User => $block->blocked),
+            $actor,
+        );
 
         return $blocks;
     }

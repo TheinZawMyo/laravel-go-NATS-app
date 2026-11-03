@@ -3,6 +3,9 @@
 namespace App\Models;
 
 use App\Enums\AccountStatus;
+use App\Enums\ContactRequestPolicy;
+use App\Enums\LastSeenVisibility;
+use App\Enums\ProfileVisibility;
 use Database\Factories\UserFactory;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -34,6 +37,10 @@ use Laravel\Fortify\TwoFactorAuthenticatable;
  * @property string|null $bio
  * @property string|null $status_text
  * @property AccountStatus $status
+ * @property bool $is_admin
+ * @property LastSeenVisibility $last_seen_visibility
+ * @property ProfileVisibility $profile_visibility
+ * @property ContactRequestPolicy $contact_requests_policy
  * @property Carbon|null $last_seen_at
  * @property string|null $remember_token
  * @property Carbon|null $created_at
@@ -42,7 +49,7 @@ use Laravel\Fortify\TwoFactorAuthenticatable;
  * @property-read string|null $avatar_url
  * @property-read ConversationMember|null $pivot
  */
-#[Fillable(['name', 'username', 'email', 'password', 'avatar_key', 'bio', 'status_text', 'last_seen_at'])]
+#[Fillable(['name', 'username', 'email', 'password', 'avatar_key', 'bio', 'status_text', 'last_seen_at', 'last_seen_visibility', 'profile_visibility', 'contact_requests_policy', 'is_admin'])]
 #[Hidden(['password', 'two_factor_secret', 'two_factor_recovery_codes', 'remember_token'])]
 class User extends Authenticatable implements MustVerifyEmail, PasskeyUser
 {
@@ -54,6 +61,10 @@ class User extends Authenticatable implements MustVerifyEmail, PasskeyUser
      */
     protected $attributes = [
         'status' => 'active',
+        'is_admin' => false,
+        'last_seen_visibility' => 'everyone',
+        'profile_visibility' => 'everyone',
+        'contact_requests_policy' => 'everyone',
     ];
 
     /**
@@ -69,6 +80,10 @@ class User extends Authenticatable implements MustVerifyEmail, PasskeyUser
             'two_factor_confirmed_at' => 'datetime',
             'last_seen_at' => 'datetime',
             'status' => AccountStatus::class,
+            'is_admin' => 'boolean',
+            'last_seen_visibility' => LastSeenVisibility::class,
+            'profile_visibility' => ProfileVisibility::class,
+            'contact_requests_policy' => ContactRequestPolicy::class,
         ];
     }
 
@@ -123,6 +138,35 @@ class User extends Authenticatable implements MustVerifyEmail, PasskeyUser
     public function isActive(): bool
     {
         return $this->status === AccountStatus::Active;
+    }
+
+    public function isAdmin(): bool
+    {
+        return (bool) $this->is_admin;
+    }
+
+    /**
+     * @return HasMany<UserReport, $this>
+     */
+    public function reportsFiled(): HasMany
+    {
+        return $this->hasMany(UserReport::class, 'reporter_id');
+    }
+
+    /**
+     * @return HasMany<UserReport, $this>
+     */
+    public function reportsReceived(): HasMany
+    {
+        return $this->hasMany(UserReport::class, 'reported_user_id');
+    }
+
+    /**
+     * @return HasMany<AuditLog, $this>
+     */
+    public function auditLogs(): HasMany
+    {
+        return $this->hasMany(AuditLog::class, 'actor_id');
     }
 
     /**

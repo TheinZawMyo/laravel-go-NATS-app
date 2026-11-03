@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { useEventListener } from '@vueuse/core';
 import { Bell, BellOff, MessagesSquare, Search } from '@lucide/vue';
 import ConnectionStatus from '@/components/chat/ConnectionStatus.vue';
 import CreateGroupDialog from '@/components/chat/CreateGroupDialog.vue';
 import NewConversationDialog from '@/components/chat/NewConversationDialog.vue';
+import SearchDialog from '@/components/chat/SearchDialog.vue';
 import PeopleDialog from '@/components/chat/PeopleDialog.vue';
 import PresenceDot from '@/components/chat/PresenceDot.vue';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -38,8 +40,16 @@ const { getInitials } = useInitials();
 const now = useNow();
 
 const search = ref('');
+const searchOpen = ref(false);
 const filter = ref<'all' | 'unread' | 'archived'>('all');
 const mounted = useMounted();
+
+useEventListener('keydown', (event: KeyboardEvent) => {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        searchOpen.value = true;
+    }
+});
 
 /**
  * The Notification permission is browser state, so it is read after mount. The
@@ -244,7 +254,19 @@ function open(conversation: Conversation): void {
                     <Bell v-if="notifications === 'granted'" />
                     <BellOff v-else />
                 </Button>
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    class="text-muted-foreground hover:text-chat-accent"
+                    aria-label="Search chats, messages, and people"
+                    title="Search (⌘K)"
+                    @click="searchOpen = true"
+                >
+                    <Search />
+                </Button>
                 <NewConversationDialog />
+                <SearchDialog v-model:open="searchOpen" />
             </div>
         </header>
 

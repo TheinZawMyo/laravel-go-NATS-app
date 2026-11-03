@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Settings\PrivacyController;
 use App\Http\Controllers\Settings\ProfileController;
 use App\Http\Controllers\Settings\SecurityController;
 use Illuminate\Auth\Middleware\RequirePassword;
@@ -10,6 +11,9 @@ Route::middleware(['auth'])->group(function () {
 
     Route::get('settings/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('settings/profile', [ProfileController::class, 'update'])->name('profile.update');
+
+    Route::get('settings/privacy', [PrivacyController::class, 'edit'])->name('privacy.edit');
+    Route::patch('settings/privacy', [PrivacyController::class, 'update'])->name('privacy.update');
 });
 
 Route::middleware(['auth', 'verified'])->group(function () {

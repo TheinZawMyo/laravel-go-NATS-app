@@ -4,6 +4,7 @@ import {
     CheckCheck,
     FileText,
     Film,
+    Flag,
     Image as ImageIcon,
     MoreHorizontal,
     Music,
@@ -15,6 +16,7 @@ import {
     Trash2,
     X,
 } from '@lucide/vue';
+import ReportDialog from '@/components/chat/ReportDialog.vue';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import {
@@ -52,6 +54,7 @@ const { getInitials } = useInitials();
 const editing = ref(false);
 const draft = ref('');
 const saving = ref(false);
+const reportOpen = ref(false);
 const localError = ref<string | null>(null);
 
 const isOwn = computed(() => props.message.sender.id === user.value?.id);
@@ -464,6 +467,10 @@ async function remove(): Promise<void> {
                         <Pin v-else />
                         {{ pinned ? 'Unpin' : 'Pin' }}
                     </DropdownMenuItem>
+                    <DropdownMenuItem v-if="!isOwn" @select="reportOpen = true">
+                        <Flag />
+                        Report message
+                    </DropdownMenuItem>
                     <template v-if="isOwn">
                         <DropdownMenuItem @select="startEditing">
                             <Pencil />
@@ -481,4 +488,6 @@ async function remove(): Promise<void> {
             </DropdownMenu>
         </div>
     </div>
+
+    <ReportDialog v-model:open="reportOpen" :message-id="message.id" />
 </template>

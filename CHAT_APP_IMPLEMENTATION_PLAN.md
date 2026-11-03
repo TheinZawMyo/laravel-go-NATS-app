@@ -424,25 +424,25 @@ Improve discovery, user safety, and account/privacy controls.
 
 ## Features
 
-- [ ] Search users and conversations.
-- [ ] Search messages within authorized conversations.
-- [ ] Evaluate PostgreSQL full-text search or Meilisearch.
-- [ ] Implement user reporting.
-- [ ] Implement moderation review tools.
-- [ ] Implement account suspension and ban flows.
-- [ ] Add abuse controls for spam, repeated requests, and suspicious uploads.
-- [ ] Add privacy settings for last seen, profile visibility, and contact requests.
-- [ ] Add session/device revocation.
-- [ ] Define account export and deletion processes.
-- [ ] Define message and attachment retention policies.
-- [ ] Record administrative actions in audit logs.
+- [x] Search users and conversations.
+- [x] Search messages within authorized conversations.
+- [x] Evaluate PostgreSQL full-text search or Meilisearch.
+- [x] Implement user reporting.
+- [x] Implement moderation review tools.
+- [x] Implement account suspension and ban flows.
+- [x] Add abuse controls for spam, repeated requests, and suspicious uploads.
+- [x] Add privacy settings for last seen, profile visibility, and contact requests.
+- [x] Add session/device revocation.
+- [x] Define account export and deletion processes.
+- [x] Define message and attachment retention policies.
+- [x] Record administrative actions in audit logs.
 
 ## Completion Criteria
 
-- [ ] Search results never expose messages from unauthorized conversations.
-- [ ] Moderation actions are auditable.
-- [ ] Users can manage supported privacy settings.
-- [ ] Retention and deletion behavior is documented and tested.
+- [x] Search results never expose messages from unauthorized conversations.
+- [x] Moderation actions are auditable.
+- [x] Users can manage supported privacy settings.
+- [x] Retention and deletion behavior is documented and tested.
 
 ---
 

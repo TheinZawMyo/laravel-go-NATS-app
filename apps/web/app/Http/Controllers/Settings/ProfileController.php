@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Settings;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Settings\ProfileDeleteRequest;
 use App\Http\Requests\Settings\ProfileUpdateRequest;
+use App\Services\AuditLogger;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -48,11 +49,20 @@ class ProfileController extends Controller
     /**
      * Delete the user's profile.
      */
-    public function destroy(ProfileDeleteRequest $request): RedirectResponse
+    public function destroy(ProfileDeleteRequest $request, AuditLogger $audit): RedirectResponse
     {
         $user = $request->user();
 
         $this->authorize('delete', $user);
+
+        $audit->record('account.deleted', $user, $user);
+
+        // Soft delete keeps message history referentially intact. Push devices
+        // are revoked immediately so the account stops receiving notifications
+        // even before an operator runs the retention cleanup.
+        $user->devices()
+            ->whereNull('revoked_at')
+            ->update(['revoked_at' => now(), 'updated_at' => now()]);
 
         Auth::logout();
 

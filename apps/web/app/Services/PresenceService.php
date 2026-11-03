@@ -14,7 +14,10 @@ use App\Models\User;
  */
 class PresenceService
 {
-    public function __construct(private readonly PresenceStore $store) {}
+    public function __construct(
+        private readonly PresenceStore $store,
+        private readonly PrivacyService $privacy,
+    ) {}
 
     /**
      * @return array{online: bool, last_seen_at: string|null}
@@ -38,11 +41,12 @@ class PresenceService
 
     /**
      * Copy presence onto the models so resources can render it without
-     * another lookup.
+     * another lookup. When a viewer is supplied, the viewer's privacy rules
+     * decide whether the timestamp is exposed.
      *
      * @param  iterable<int, User>  $users
      */
-    public function annotate(iterable $users): void
+    public function annotate(iterable $users, ?User $viewer = null): void
     {
         $models = [];
 
@@ -54,9 +58,26 @@ class PresenceService
             return;
         }
 
+        $visible = $viewer !== null
+            ? $this->privacy->lastSeenVisibleMap($viewer, array_values($models))
+            : null;
+
         foreach ($this->store->snapshot(array_keys($models)) as $userId => $presence) {
-            $models[$userId]->setAttribute('is_online', (bool) $presence['online']);
-            $models[$userId]->setAttribute('presence_last_seen_at', $presence['last_seen_at']);
+            if (isset($models[$userId])) {
+                $models[$userId]->setAttribute('is_online', (bool) $presence['online']);
+                $models[$userId]->setAttribute('presence_last_seen_at', $presence['last_seen_at']);
+            }
+        }
+
+        foreach ($models as $userId => $model) {
+            $canSee = $visible === null || ($visible[$userId] ?? true);
+
+            $model->setAttribute('presence_visible', $canSee);
+
+            if (! $canSee) {
+                $model->setAttribute('is_online', false);
+                $model->setAttribute('presence_last_seen_at', null);
+            }
         }
     }
 }

@@ -131,6 +131,61 @@ Notes:
   through attachments newest-first; the composer records voice messages with
   `MediaRecorder` and uploads them as normal audio attachments.
 
+## Search, moderation, and privacy
+
+Search is scoped to the signed-in user and never bypasses conversation
+authorization:
+
+- `GET /api/v1/search/conversations?q=` matches conversation titles and the
+  names/usernames of other members in conversations the viewer has not left.
+- `GET /api/v1/search/messages?q=` joins the viewer's active
+  `conversation_members` row, hides deleted messages, and respects
+  `history_from_seq`, so members who joined after history was hidden cannot
+  find older messages. PostgreSQL uses the generated `messages.search_vector`
+  column with `plainto_tsquery('simple', ...)`; SQLite (tests) falls back to an
+  escaped `LIKE`.
+- `GET /api/v1/users?q=` goes through `PrivacyService`, which hides profiles
+  that are limited to contacts.
+
+Search, message sends, contact requests, and reports are rate limited in
+`AppServiceProvider` (60 searches/min, 60 messages/min, 30 contact
+requests/hour, 10 reports/hour). Reporting is available from a direct
+conversation's action menu and from each message bubble. The API is
+`POST /api/v1/reports` with either `username` or `message_id`.
+
+Users with `users.is_admin = true` get:
+
+- `GET /api/v1/admin/reports` and
+  `POST /api/v1/admin/reports/{report}/resolve` for the review queue.
+- `POST /api/v1/admin/users/{username}/moderate` with `suspend`, `ban`, or
+  `reactivate`. Suspending or banning revokes the target's devices.
+- `GET /api/v1/admin/audit-logs` for the append-only audit trail. Every
+  moderation action and account deletion writes a row via `AuditLogger`.
+- The `/moderation` Inertia page, linked in the sidebar only for admins.
+  Promote an account with `UPDATE users SET is_admin = true WHERE username = ...`
+  (or the equivalent model update).
+
+Privacy settings live at `/settings/privacy`: last seen (`everyone`,
+`contacts`, `nobody`), profile visibility (`everyone`, `contacts`), and contact
+request policy (`everyone`, `contacts`, `nobody`). Presence annotations and
+`PublicUserResource` honour the last-seen setting. `GET /api/v1/me/export`
+streams a JSON export of the account, privacy settings, contacts, blocks,
+conversation metadata, authored messages, reports, and devices — never password
+hashes, 2FA secrets, recovery codes, or remember tokens. Account deletion is
+performed from `/settings/profile`, which revokes devices and records an audit
+entry.
+
+Retention policy:
+
+- Deleted messages keep their rows (tombstones) so clients can render "This
+  message was deleted"; bodies are cleared on delete.
+- Abandoned uploads are pruned after `MEDIA_PENDING_RETENTION_HOURS` (24h).
+- Attachments of deleted messages are purged after
+  `MEDIA_DELETED_MESSAGE_GRACE_DAYS` (7 days). Set it to `0` to purge on the
+  next daily run.
+- Reports, audit logs, and conversation/message history are retained until an
+  account is deleted; exports are generated on demand and not stored.
+
 ## Server-side rendering
 
 Inertia SSR is enabled in `apps/web/config/inertia.php` (`ssr.enabled = true`).

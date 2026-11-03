@@ -18,6 +18,10 @@ class PublicUserResource extends JsonResource
     {
         $user = $this->resource;
         $relationship = $user instanceof User ? $user->getAttribute('relationship') : null;
+        // PresenceService sets this from the target's privacy settings. Without
+        // an annotation (for example a freshly built resource in a test) the
+        // safe default is to expose what was loaded.
+        $presenceVisible = (bool) ($this->presence_visible ?? true);
 
         return [
             'id' => $this->id,
@@ -28,8 +32,10 @@ class PublicUserResource extends JsonResource
             'status_text' => $this->status_text,
             // Presence comes from the gateway's connection leases; the column
             // is the fallback for users that have no live lease.
-            'online' => (bool) ($this->is_online ?? false),
-            'last_seen_at' => $this->presence_last_seen_at ?? $this->last_seen_at,
+            'online' => $presenceVisible && (bool) ($this->is_online ?? false),
+            'last_seen_at' => $presenceVisible
+                ? ($this->presence_last_seen_at ?? $this->last_seen_at)
+                : null,
             // Only user search fills this in, so it stays out of every other
             // user representation.
             'relationship' => $this->when(

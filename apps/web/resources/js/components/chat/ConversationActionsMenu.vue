@@ -5,9 +5,11 @@ import {
     ArchiveRestore,
     BellOff,
     BellRing,
+    Flag,
     MoreVertical,
 } from '@lucide/vue';
 import { toast } from 'vue-sonner';
+import ReportDialog from '@/components/chat/ReportDialog.vue';
 import { Button } from '@/components/ui/button';
 import {
     DropdownMenu,
@@ -22,10 +24,16 @@ const chat = useChatStore();
 
 const busy = ref(false);
 const open = ref(false);
+const reportOpen = ref(false);
 
 const conversation = computed(() => chat.activeConversation);
 const isMuted = computed(() => conversation.value?.is_muted === true);
 const isArchived = computed(() => conversation.value?.archived === true);
+const reportUsername = computed(() =>
+    conversation.value?.type === 'direct'
+        ? (conversation.value.participant?.username ?? null)
+        : null,
+);
 
 async function run(action: () => Promise<void>): Promise<void> {
     if (busy.value) {
@@ -93,6 +101,16 @@ async function toggleArchive(): Promise<void> {
                 <Archive v-else />
                 {{ isArchived ? 'Unarchive' : 'Archive conversation' }}
             </DropdownMenuItem>
+            <DropdownMenuItem
+                v-if="reportUsername !== null"
+                :disabled="busy"
+                @select="reportOpen = true"
+            >
+                <Flag />
+                Report user
+            </DropdownMenuItem>
         </DropdownMenuContent>
     </DropdownMenu>
+
+    <ReportDialog v-model:open="reportOpen" :username="reportUsername" />
 </template>

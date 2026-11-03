@@ -9,6 +9,7 @@ use App\Http\Resources\PublicUserResource;
 use App\Models\User;
 use App\Services\ContactService;
 use App\Services\PresenceService;
+use App\Services\PrivacyService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Str;
@@ -33,6 +34,7 @@ class UserController extends Controller
         string $username,
         PresenceService $presence,
         ContactService $contacts,
+        PrivacyService $privacy,
     ): PublicUserResource {
         $user = User::query()
             ->where('username', Str::lower($username))
@@ -41,7 +43,11 @@ class UserController extends Controller
 
         $this->authorize('view', $user);
 
-        $presence->annotate([$user]);
+        // A profile restricted to contacts must be indistinguishable from a
+        // missing user, otherwise the endpoint becomes a username oracle.
+        abort_unless($privacy->canViewProfile($request->user(), $user), 404);
+
+        $presence->annotate([$user], $request->user());
 
         $user->setAttribute(
             'relationship',

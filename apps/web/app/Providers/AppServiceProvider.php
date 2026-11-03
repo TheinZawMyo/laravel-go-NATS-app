@@ -86,6 +86,32 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('upload-receive', function (Request $request): Limit {
             return Limit::perMinute(60)->by($request->ip());
         });
+
+        RateLimiter::for('messages', function (Request $request): Limit {
+            return Limit::perMinute(60)->by(
+                $request->user()?->id ?: $request->ip(),
+            );
+        });
+
+        // Contact requests are a classic spam vector; a tighter hourly bucket
+        // keeps repeated requests from flooding a target's inbox.
+        RateLimiter::for('contact-requests', function (Request $request): Limit {
+            return Limit::perHour(30)->by(
+                $request->user()?->id ?: $request->ip(),
+            );
+        });
+
+        RateLimiter::for('reports', function (Request $request): Limit {
+            return Limit::perHour(10)->by(
+                $request->user()?->id ?: $request->ip(),
+            );
+        });
+
+        RateLimiter::for('search', function (Request $request): Limit {
+            return Limit::perMinute(60)->by(
+                $request->user()?->id ?: $request->ip(),
+            );
+        });
     }
 
     /**

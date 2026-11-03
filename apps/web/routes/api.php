@@ -1,10 +1,14 @@
 <?php
 
+use App\Http\Controllers\Api\V1\Admin\AuditLogController;
+use App\Http\Controllers\Api\V1\Admin\ReportController as AdminReportController;
+use App\Http\Controllers\Api\V1\Admin\UserController as AdminUserController;
 use App\Http\Controllers\Api\V1\BlockController;
 use App\Http\Controllers\Api\V1\ContactController;
 use App\Http\Controllers\Api\V1\ContactRequestController;
 use App\Http\Controllers\Api\V1\ConversationController;
 use App\Http\Controllers\Api\V1\ConversationMediaController;
+use App\Http\Controllers\Api\V1\DataExportController;
 use App\Http\Controllers\Api\V1\DeviceController;
 use App\Http\Controllers\Api\V1\GatewayTokenController;
 use App\Http\Controllers\Api\V1\GroupController;
@@ -14,14 +18,30 @@ use App\Http\Controllers\Api\V1\MeController;
 use App\Http\Controllers\Api\V1\MessageAttachmentController;
 use App\Http\Controllers\Api\V1\MessageController;
 use App\Http\Controllers\Api\V1\MessagePinController;
+use App\Http\Controllers\Api\V1\SearchController;
 use App\Http\Controllers\Api\V1\UploadController;
 use App\Http\Controllers\Api\V1\UserController;
+use App\Http\Controllers\Api\V1\UserReportController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware(['web', 'auth'])->prefix('v1')->group(function () {
     Route::get('me', [MeController::class, 'show'])->name('api.v1.me');
+    Route::get('me/export', DataExportController::class)->name('api.v1.me.export');
 
     Route::get('gateway/token', GatewayTokenController::class)->name('api.v1.gateway.token');
+
+    Route::get('search/conversations', [SearchController::class, 'conversations'])
+        ->middleware('throttle:search')
+        ->name('api.v1.search.conversations');
+    Route::get('search/messages', [SearchController::class, 'messages'])
+        ->middleware('throttle:search')
+        ->name('api.v1.search.messages');
+
+    Route::get('reports', [UserReportController::class, 'index'])->name('api.v1.reports.index');
+    Route::post('reports', [UserReportController::class, 'store'])
+        ->middleware('throttle:reports')
+        ->name('api.v1.reports.store');
+    Route::get('reports/{report}', [UserReportController::class, 'show'])->name('api.v1.reports.show');
 
     Route::get('users', [UserController::class, 'index'])->name('api.v1.users.index');
     Route::get('users/{username}', [UserController::class, 'show'])->name('api.v1.users.show');
@@ -31,7 +51,9 @@ Route::middleware(['web', 'auth'])->prefix('v1')->group(function () {
     Route::delete('contacts/{username}', [ContactController::class, 'destroy'])->name('api.v1.contacts.destroy');
 
     Route::get('contact-requests', [ContactRequestController::class, 'index'])->name('api.v1.contact-requests.index');
-    Route::post('contact-requests', [ContactRequestController::class, 'store'])->name('api.v1.contact-requests.store');
+    Route::post('contact-requests', [ContactRequestController::class, 'store'])
+        ->middleware('throttle:contact-requests')
+        ->name('api.v1.contact-requests.store');
     Route::post('contact-requests/{contactRequest}/accept', [ContactRequestController::class, 'accept'])->name('api.v1.contact-requests.accept');
     Route::post('contact-requests/{contactRequest}/reject', [ContactRequestController::class, 'reject'])->name('api.v1.contact-requests.reject');
     Route::post('contact-requests/{contactRequest}/cancel', [ContactRequestController::class, 'cancel'])->name('api.v1.contact-requests.cancel');
@@ -70,7 +92,9 @@ Route::middleware(['web', 'auth'])->prefix('v1')->group(function () {
     Route::delete('messages/{message}/pin', [MessagePinController::class, 'destroy'])->name('api.v1.pins.destroy');
 
     Route::get('conversations/{conversation}/messages', [MessageController::class, 'index'])->name('api.v1.messages.index');
-    Route::post('conversations/{conversation}/messages', [MessageController::class, 'store'])->name('api.v1.messages.store');
+    Route::post('conversations/{conversation}/messages', [MessageController::class, 'store'])
+        ->middleware('throttle:messages')
+        ->name('api.v1.messages.store');
     Route::patch('messages/{message}', [MessageController::class, 'update'])->name('api.v1.messages.update');
     Route::delete('messages/{message}', [MessageController::class, 'destroy'])->name('api.v1.messages.destroy');
 
@@ -80,6 +104,19 @@ Route::middleware(['web', 'auth'])->prefix('v1')->group(function () {
     Route::post('uploads/presign', [UploadController::class, 'presign'])
         ->middleware('throttle:uploads')
         ->name('api.v1.uploads.presign');
+
+    /*
+     | Moderation is intentionally a separate prefix. Every route below is
+     | protected by the `admin` middleware and must write an audit log entry.
+     */
+    Route::middleware('admin')->prefix('admin')->group(function (): void {
+        Route::get('reports', [AdminReportController::class, 'index'])->name('api.v1.admin.reports.index');
+        Route::post('reports/{report}/resolve', [AdminReportController::class, 'resolve'])->name('api.v1.admin.reports.resolve');
+
+        Route::post('users/{username}/moderate', [AdminUserController::class, 'moderate'])->name('api.v1.admin.users.moderate');
+
+        Route::get('audit-logs', [AuditLogController::class, 'index'])->name('api.v1.admin.audit-logs.index');
+    });
 });
 
 /*
