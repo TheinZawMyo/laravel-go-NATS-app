@@ -143,6 +143,8 @@ class DataExportService
                 'seq' => $message->seq,
                 'type' => $message->type->value,
                 'body' => $message->deleted_at === null ? $message->body : null,
+                'is_encrypted' => (bool) $message->is_encrypted,
+                'encryption' => $message->deleted_at === null ? $message->encryption : null,
                 'reply_to_message_id' => $message->reply_to_message_id,
                 'edited_at' => $message->edited_at,
                 'deleted_at' => $message->deleted_at,
@@ -152,6 +154,10 @@ class DataExportService
                         'original_name' => $attachment->original_name,
                         'mime_type' => $attachment->mime_type,
                         'size_bytes' => $attachment->size_bytes,
+                        'is_encrypted' => (bool) $attachment->is_encrypted,
+                        'key_version' => $attachment->key_version,
+                        'key_iv' => $attachment->key_iv,
+                        'key_ciphertext' => $attachment->key_ciphertext,
                     ])
                     ->all(),
             ])

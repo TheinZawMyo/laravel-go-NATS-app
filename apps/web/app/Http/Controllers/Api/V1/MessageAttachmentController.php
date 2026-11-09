@@ -44,15 +44,21 @@ class MessageAttachmentController extends Controller
 
         // Media that only renders as a document is served as a download;
         // images/video/audio stay inline so bubbles can preview them.
-        $disposition = $attachment->isImage() || $attachment->isVideo() || $attachment->isAudio()
-            ? 'inline'
-            : 'attachment';
+        // Encrypted rows are ciphertext: the browser decrypts them before
+        // rendering, so they must never be served inline as their media type.
+        $disposition = ! $attachment->is_encrypted
+            && ($attachment->isImage() || $attachment->isVideo() || $attachment->isAudio())
+                ? 'inline'
+                : 'attachment';
+        $contentType = $attachment->is_encrypted
+            ? 'application/octet-stream'
+            : $attachment->mime_type;
 
         return $disk->response(
             $key,
             $this->safeFilename($attachment),
             [
-                'Content-Type' => $attachment->mime_type,
+                'Content-Type' => $contentType,
                 'X-Content-Type-Options' => 'nosniff',
                 'Content-Security-Policy' => "default-src 'none'; sandbox",
                 'Cache-Control' => 'private, max-age=3600',

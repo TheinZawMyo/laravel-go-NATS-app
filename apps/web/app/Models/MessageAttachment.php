@@ -23,6 +23,12 @@ use Illuminate\Support\Carbon;
  * @property string|null $thumbnail_key
  * @property string $original_name
  * @property string $mime_type
+ * @property bool $is_encrypted
+ * @property string|null $conversation_id
+ * @property int|null $key_version
+ * @property string|null $iv
+ * @property string|null $key_iv
+ * @property string|null $key_ciphertext
  * @property int $size_bytes
  * @property Carbon|null $uploaded_at
  * @property AttachmentScanStatus $scan_status
@@ -43,6 +49,12 @@ use Illuminate\Support\Carbon;
     'thumbnail_key',
     'original_name',
     'mime_type',
+    'is_encrypted',
+    'conversation_id',
+    'key_version',
+    'iv',
+    'key_iv',
+    'key_ciphertext',
     'size_bytes',
     'uploaded_at',
     'scan_status',
@@ -63,6 +75,8 @@ class MessageAttachment extends Model
     {
         return [
             'size_bytes' => 'integer',
+            'is_encrypted' => 'boolean',
+            'key_version' => 'integer',
             'width' => 'integer',
             'height' => 'integer',
             'duration_ms' => 'integer',

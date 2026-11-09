@@ -22,8 +22,13 @@ import { Textarea } from '@/components/ui/textarea';
 import { useAppearance } from '@/composables/useAppearance';
 import { formatDuration, formatFileSize } from '@/lib/format';
 import { apiRequest } from '@/lib/http';
-import { MAX_UPLOAD_BYTES, uploadFile } from '@/lib/upload';
+import {
+    MAX_UPLOAD_BYTES,
+    resolveMimeType,
+    uploadFile,
+} from '@/lib/upload';
 import { useChatStore } from '@/stores/chat';
+import { useE2eeStore } from '@/stores/e2ee';
 import { useRealtimeStore } from '@/stores/realtime';
 import type { MessageAttachment } from '@/types';
 
@@ -40,6 +45,7 @@ type PendingUpload = {
 };
 
 const chat = useChatStore();
+const e2ee = useE2eeStore();
 const realtime = useRealtimeStore();
 const { resolvedAppearance } = useAppearance();
 
@@ -110,10 +116,26 @@ const canSchedule = computed(
     () =>
         !scheduling.value &&
         !chat.sending &&
+        !chat.activeIsEncrypted &&
         draft.value.trim() !== '' &&
         chat.replyTo === null &&
         uploads.value.length === 0,
 );
+const scheduleUnavailableReason = computed(() => {
+    if (chat.activeIsEncrypted) {
+        return 'Scheduled messages are unavailable in end-to-end encrypted conversations.';
+    }
+
+    if (chat.replyTo !== null) {
+        return 'Scheduled messages cannot include a reply.';
+    }
+
+    if (uploads.value.length > 0) {
+        return 'Scheduled messages cannot include attachments.';
+    }
+
+    return '';
+});
 const scheduleMinimum = ref(
     localDateTimeValue(new Date(Date.now() + 60_000)),
 );
@@ -454,13 +476,43 @@ function addFiles(files: File[]): void {
 
 async function startUpload(upload: PendingUpload): Promise<void> {
     try {
-        upload.attachment = await uploadFile(
-            upload.file,
-            (percent) => {
-                upload.progress = percent;
-            },
-            upload.controller.signal,
-        );
+        const conversation = chat.activeConversation;
+        const onProgress = (percent: number): void => {
+            upload.progress = percent;
+        };
+
+        if (
+            conversation?.e2ee_enabled === true &&
+            conversation.e2ee_key_version !== null
+        ) {
+            const encrypted = await e2ee.encryptAttachment(
+                conversation.id,
+                conversation.e2ee_key_version,
+                upload.file,
+            );
+
+            upload.attachment = await uploadFile(
+                encrypted.blob,
+                onProgress,
+                upload.controller.signal,
+                {
+                    conversationId: conversation.id,
+                    keyVersion: conversation.e2ee_key_version,
+                    iv: encrypted.iv,
+                    keyIv: encrypted.keyIv,
+                    keyCiphertext: encrypted.keyCiphertext,
+                    originalName: upload.file.name,
+                    mimeType: resolveMimeType(upload.file),
+                },
+            );
+        } else {
+            upload.attachment = await uploadFile(
+                upload.file,
+                onProgress,
+                upload.controller.signal,
+            );
+        }
+
         upload.status = 'done';
         upload.progress = 100;
     } catch (error) {
@@ -657,7 +709,8 @@ onBeforeUnmount(() => {
                         v-model="scheduledFor"
                         type="datetime-local"
                         :min="scheduleMinimum"
-                        class="h-9 rounded-lg border border-border bg-background px-2 text-sm text-foreground"
+                        step="60"
+                        class="h-10 w-full min-w-0 cursor-pointer rounded-lg border border-border bg-background px-3 text-sm text-foreground"
                     />
                 </label>
                 <Button
@@ -861,6 +914,7 @@ onBeforeUnmount(() => {
                     size="icon-sm"
                     class="shrink-0 text-muted-foreground hover:text-chat-accent"
                     aria-label="Schedule message"
+                    :title="scheduleUnavailableReason || 'Schedule message'"
                     :disabled="!canSchedule"
                     @click="openScheduler"
                 >

@@ -492,7 +492,7 @@ Only start these after the core messaging flow is reliable.
 
 - [ ] Voice and video calls using WebRTC.
 - [ ] Screen sharing.
-- [ ] End-to-end encryption (E2EE).
+- [x] End-to-end encryption (E2EE) baseline. (browser-side message and attachment encryption, per-conversation key versions, per-member key wraps, and passphrase-encrypted identity backup are implemented; production hardening and multi-device support remain below)
 - [ ] Disappearing messages.
 - [x] Message scheduling. (text messages can be scheduled up to 30 days ahead, listed/cancelled by their sender, and dispatched through Laravel's scheduler)
 - [ ] Threaded replies.
@@ -513,6 +513,50 @@ Only start these after the core messaging flow is reliable.
 - [ ] Use load tests to determine connection and throughput limits.
 - [ ] Track concurrent sockets, message rate, group size, payload size, and delivery latency separately.
 - [ ] Do not add Kubernetes unless operational complexity and scale justify it.
+
+## End-to-End Encryption (E2EE)
+
+### Implemented baseline
+
+- [x] Generate a browser identity key pair with Web Crypto (ECDH P-256); register only its public key and fingerprint with Laravel.
+- [x] Generate an AES-256-GCM conversation key in the browser and publish a separately encrypted wrap for each active member using ephemeral ECDH P-256.
+- [x] Encrypt message bodies in the browser with AES-GCM. Bind each ciphertext to its conversation, message/client-message ID, and key version with additional authenticated data (AAD).
+- [x] Encrypt attachment bytes in the browser with a per-attachment AES-GCM key; wrap that key with the conversation key before upload.
+- [x] Store ciphertext, encryption metadata, public keys, and recipient-specific wraps on the server; Laravel authorizes access and checks the active key version and message AAD.
+- [x] Support passphrase-encrypted identity-key backup using PBKDF2-SHA-256 and AES-GCM, plus restore/unlock in the browser.
+- [x] Require active members to have registered an identity before enabling encryption or distributing a new conversation key.
+- [x] Reject plaintext messages in an encrypted conversation and disallow scheduled messages for encrypted conversations.
+
+### Current design limits
+
+- Identity private-key material is encrypted in IndexedDB using a non-extractable device AES-GCM key; legacy cleartext `localStorage` data is migrated and removed. This protects against reading the stored record alone, but same-origin script execution can still use the unlocked identity and remains an XSS risk. It is not a device-specific identity or multi-device model.
+- Conversation encryption uses a shared AES key per version, not a ratcheting protocol. Key wrapping now derives AES-GCM keys with HKDF-SHA-256 and binds each wrap to its conversation, version, and recipient. A compromised conversation key can still expose messages protected by that version; forward secrecy and post-compromise recovery are not provided.
+- Group membership changes now revoke server-side wraps for departing/returning members, mark rotation as required, and block sends/uploads/edits until a new version is published. This cannot erase keys or plaintext a former member already obtained. New members receive only the new version, subject to existing history visibility rules.
+- A public-key fingerprint is displayed/stored, but there is no verified out-of-band safety-number flow or key-transparency mechanism. A compromised server could substitute public keys before users verify them.
+- Backups are recoverable by anyone who knows the passphrase and obtains the backup ciphertext. The server cannot recover a lost passphrase; users must be told that losing both the device key and passphrase may make encrypted history unrecoverable.
+- Search, moderation, server-side previews, notification snippets, and plaintext exports cannot inspect encrypted bodies. Keep these capabilities disabled or explicitly client-side for encrypted content; never silently fall back to plaintext.
+- E2EE protects content, not all metadata. The service still sees account/conversation membership, timing, delivery state, ciphertext sizes, and attachment traffic metadata.
+
+### Hardening and completion tasks
+
+- [ ] Treat the current Web Crypto construction as a baseline, not an independently reviewed protocol. Commission a security review before claiming production-grade E2EE; document the threat model, supported browsers, cryptographic formats, and protocol/version migration policy.
+- [ ] Replace the current local vault with a reviewed device-key lifecycle and minimize the time private JWK material remains in application memory. Prefer a non-extractable identity key where recovery requirements allow; keep backup export limited to an explicit recovery flow.
+- [ ] Add a device model: device-specific identity/prekeys, device enrollment and verification, per-device key wraps, device listing/revocation, and rekeying when a device is removed. Define how existing conversations are securely joined on a new device.
+- [x] Require a new sequential conversation key version after group membership changes; revoke old server-side wraps for departing/returning members, serialize membership changes with key publication, and block sends until rotation completes. Identity/device revocation and suspected-compromise flows remain.
+- [ ] Bind encrypted attachment metadata to authenticated context (conversation, message/attachment identity, and key version) and validate envelope sizes/encodings. Review MIME/name/thumbnail handling so cleartext metadata is not accidentally uploaded or exposed.
+- [ ] Validate backup parameters and payload bounds server-side, version the backup envelope, and provide recovery guidance. Never log private keys, passphrases, plaintext, or decrypted attachment data.
+- [ ] Add tests for wrong passphrases, tampered ciphertext/AAD, cross-conversation replay, missing or stale wraps, unauthorized membership, membership changes, device loss, and ciphertext-only persistence across messages, edits, and attachments. (Crypto primitive round trips/tamper checks, key rotation gating, wrap revocation on removal/rejoin, and version sequencing are covered; broader cases remain.)
+- [ ] Add user-visible encrypted/unencrypted state, key fingerprint verification, backup status, and clear recovery limitations. Warn before enabling encryption where current server-side features will stop working.
+- [ ] Document encrypted-content behavior for search, moderation/reporting, notifications, exports, retention, account deletion, and backups; ensure no server feature assumes access to plaintext.
+- [ ] Decide whether to adopt a vetted, interoperable protocol/library (for example, a Signal-protocol implementation) before adding multi-device support or making strong security guarantees.
+
+### E2EE acceptance criteria
+
+- [ ] A server/database operator cannot recover message or attachment plaintext from persisted records, logs, or backups.
+- [ ] Only an authorized member/device with the correct key material can decrypt content; tampering and replay across message or conversation context fails authentication.
+- [ ] Key rotation and device/member revocation follow documented rules, and new members do not gain historical access unless the product explicitly grants it.
+- [ ] Lost-device and backup/passphrase recovery outcomes are understandable and tested; no silent plaintext fallback occurs.
+- [ ] Security review findings are resolved or explicitly recorded before the product presents E2EE as production-ready.
 
 ---
 

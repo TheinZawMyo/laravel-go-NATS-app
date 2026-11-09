@@ -46,6 +46,11 @@ class ConversationResource extends JsonResource
             'next_message_seq' => (int) $this->next_message_seq,
             'viewer_role' => $this->viewer_role ?? null,
             'history_visible_to_new_members' => $this->sharesHistoryWithNewMembers(),
+            'e2ee_enabled' => (bool) $this->e2ee_enabled,
+            'e2ee_key_version' => $this->e2ee_key_version !== null
+                ? (int) $this->e2ee_key_version
+                : null,
+            'e2ee_rotation_required' => (bool) $this->e2ee_rotation_required,
             'muted_until' => $mutedUntil,
             'is_muted' => $mutedUntil !== null && $mutedUntil->isFuture(),
             'archived' => (bool) ($this->viewer_archived ?? false),

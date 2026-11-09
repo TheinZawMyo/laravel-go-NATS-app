@@ -174,6 +174,7 @@ class GroupService
         $historyFromSeq = $this->historyFromSeqFor($conversation);
 
         DB::transaction(function () use ($conversation, $toAdd, $existing, $historyFromSeq): void {
+            DB::table('conversations')->where('id', $conversation->id)->lockForUpdate()->first();
             $now = Carbon::now();
 
             foreach ($toAdd as $user) {
@@ -194,6 +195,8 @@ class GroupService
                             'updated_at' => $now,
                         ]);
 
+                    $this->revokeE2eeWraps($conversation, (string) $user->id);
+
                     continue;
                 }
 
@@ -202,7 +205,11 @@ class GroupService
                     'joined_at' => $now,
                     'history_from_seq' => $historyFromSeq,
                 ]);
+
+                $this->revokeE2eeWraps($conversation, (string) $user->id);
             }
+
+            $this->requireE2eeRotation($conversation);
 
             $this->events->conversationUpdated($conversation, 'member_added');
         });
@@ -249,6 +256,7 @@ class GroupService
         }
 
         DB::transaction(function () use ($conversation, $target): void {
+            DB::table('conversations')->where('id', $conversation->id)->lockForUpdate()->first();
             DB::table('conversation_members')
                 ->where('conversation_id', $conversation->id)
                 ->where('user_id', $target->id)
@@ -256,6 +264,9 @@ class GroupService
                     'left_at' => Carbon::now(),
                     'updated_at' => Carbon::now(),
                 ]);
+
+            $this->revokeE2eeWraps($conversation, (string) $target->id);
+            $this->requireE2eeRotation($conversation);
 
             $this->events->conversationRemoved($conversation, (string) $target->id);
             $this->events->conversationUpdated($conversation, 'member_removed');
@@ -284,6 +295,7 @@ class GroupService
         }
 
         DB::transaction(function () use ($conversation, $actor): void {
+            DB::table('conversations')->where('id', $conversation->id)->lockForUpdate()->first();
             DB::table('conversation_members')
                 ->where('conversation_id', $conversation->id)
                 ->where('user_id', $actor->id)
@@ -291,6 +303,9 @@ class GroupService
                     'left_at' => Carbon::now(),
                     'updated_at' => Carbon::now(),
                 ]);
+
+            $this->revokeE2eeWraps($conversation, (string) $actor->id);
+            $this->requireE2eeRotation($conversation);
 
             $this->events->conversationRemoved($conversation, (string) $actor->id);
             $this->events->conversationUpdated($conversation, 'member_left');
@@ -433,6 +448,7 @@ class GroupService
         $historyFromSeq = $this->historyFromSeqFor($conversation);
 
         DB::transaction(function () use ($conversation, $invite, $actor, $historyFromSeq): void {
+            DB::table('conversations')->where('id', $conversation->id)->lockForUpdate()->first();
             $now = Carbon::now();
 
             $existing = DB::table('conversation_members')
@@ -461,6 +477,9 @@ class GroupService
                     'history_from_seq' => $historyFromSeq,
                 ]);
             }
+
+            $this->revokeE2eeWraps($conversation, (string) $actor->id);
+            $this->requireE2eeRotation($conversation);
 
             DB::table('conversation_invites')
                 ->where('id', $invite->id)
@@ -549,6 +568,7 @@ class GroupService
         }
 
         DB::transaction(function () use ($conversation, $actor, $successor): void {
+            DB::table('conversations')->where('id', $conversation->id)->lockForUpdate()->first();
             DB::table('conversation_members')
                 ->where('conversation_id', $conversation->id)
                 ->where('user_id', $successor)
@@ -569,6 +589,9 @@ class GroupService
                 ->where('id', $conversation->id)
                 ->update(['created_by' => $successor]);
 
+            $this->revokeE2eeWraps($conversation, (string) $actor->id);
+            $this->requireE2eeRotation($conversation);
+
             $this->events->conversationRemoved($conversation, (string) $actor->id);
             $this->events->conversationUpdated($conversation, 'owner_changed');
             $this->events->conversationChangedForUsers(
@@ -577,6 +600,30 @@ class GroupService
                 'owner_changed',
             );
         });
+    }
+
+    /**
+     * Membership changes invalidate the departing or returning member's old
+     * server-side key deliveries and require a fresh conversation key.
+     */
+    private function revokeE2eeWraps(Conversation $conversation, string $userId): void
+    {
+        DB::table('conversation_key_wraps')
+            ->where('recipient_user_id', $userId)
+            ->whereIn('conversation_key_id', function ($query) use ($conversation): void {
+                $query->select('id')
+                    ->from('conversation_e2ee_keys')
+                    ->where('conversation_id', $conversation->id);
+            })
+            ->delete();
+    }
+
+    private function requireE2eeRotation(Conversation $conversation): void
+    {
+        DB::table('conversations')
+            ->where('id', $conversation->id)
+            ->where('e2ee_enabled', true)
+            ->update(['e2ee_rotation_required' => true]);
     }
 
     private function assertGroup(Conversation $conversation): void

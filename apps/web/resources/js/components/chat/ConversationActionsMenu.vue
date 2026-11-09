@@ -6,9 +6,13 @@ import {
     BellOff,
     BellRing,
     Flag,
+    KeyRound,
+    LockKeyhole,
     MoreVertical,
+    ShieldCheck,
 } from '@lucide/vue';
 import { toast } from 'vue-sonner';
+import E2eeBackupDialog from '@/components/chat/E2eeBackupDialog.vue';
 import ReportDialog from '@/components/chat/ReportDialog.vue';
 import { Button } from '@/components/ui/button';
 import {
@@ -19,12 +23,15 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ApiError } from '@/lib/http';
 import { useChatStore } from '@/stores/chat';
+import { useE2eeStore } from '@/stores/e2ee';
 
 const chat = useChatStore();
+const e2ee = useE2eeStore();
 
 const busy = ref(false);
 const open = ref(false);
 const reportOpen = ref(false);
+const backupOpen = ref(false);
 
 const conversation = computed(() => chat.activeConversation);
 const isMuted = computed(() => conversation.value?.is_muted === true);
@@ -75,6 +82,10 @@ async function toggleArchive(): Promise<void> {
 
     await run(() => chat.setArchived(conversationId, !isArchived.value));
 }
+
+async function enableEncryption(): Promise<void> {
+    await run(() => chat.enableActiveEncryption());
+}
 </script>
 
 <template>
@@ -102,6 +113,29 @@ async function toggleArchive(): Promise<void> {
                 {{ isArchived ? 'Unarchive' : 'Archive conversation' }}
             </DropdownMenuItem>
             <DropdownMenuItem
+                v-if="conversation?.e2ee_enabled === true"
+                disabled
+            >
+                <ShieldCheck />
+                End-to-end encrypted
+            </DropdownMenuItem>
+            <DropdownMenuItem
+                v-else-if="conversation !== null"
+                :disabled="busy"
+                @select="enableEncryption"
+            >
+                <LockKeyhole />
+                Enable encryption
+            </DropdownMenuItem>
+            <DropdownMenuItem
+                v-if="e2ee.ready"
+                :disabled="busy"
+                @select="backupOpen = true"
+            >
+                <KeyRound />
+                Back up encryption key
+            </DropdownMenuItem>
+            <DropdownMenuItem
                 v-if="reportUsername !== null"
                 :disabled="busy"
                 @select="reportOpen = true"
@@ -113,4 +147,5 @@ async function toggleArchive(): Promise<void> {
     </DropdownMenu>
 
     <ReportDialog v-model:open="reportOpen" :username="reportUsername" />
+    <E2eeBackupDialog v-model:open="backupOpen" />
 </template>

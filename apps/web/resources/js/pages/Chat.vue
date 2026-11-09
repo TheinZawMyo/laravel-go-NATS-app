@@ -1,11 +1,17 @@
 <script setup lang="ts">
 import { Head } from '@inertiajs/vue3';
-import { ChevronLeft, MessagesSquare, RefreshCw } from '@lucide/vue';
+import {
+    ChevronLeft,
+    LockKeyhole,
+    MessagesSquare,
+    RefreshCw,
+} from '@lucide/vue';
 import { computed, onBeforeUnmount, onMounted, watch } from 'vue';
 import ConnectionStatus from '@/components/chat/ConnectionStatus.vue';
 import ConversationActionsMenu from '@/components/chat/ConversationActionsMenu.vue';
 import ConversationList from '@/components/chat/ConversationList.vue';
 import ConversationMediaDialog from '@/components/chat/ConversationMediaDialog.vue';
+import E2eeBanner from '@/components/chat/E2eeBanner.vue';
 import GroupInfoDialog from '@/components/chat/GroupInfoDialog.vue';
 import MessageComposer from '@/components/chat/MessageComposer.vue';
 import MessageTimeline from '@/components/chat/MessageTimeline.vue';
@@ -21,15 +27,17 @@ import { useAuth } from '@/composables/useAuth';
 import { conversationTitle, formatPresence } from '@/lib/format';
 import { useChatStore } from '@/stores/chat';
 import { useContactsStore } from '@/stores/contacts';
+import { useE2eeStore } from '@/stores/e2ee';
 import { useRealtimeStore } from '@/stores/realtime';
 import type { ChatPageProps } from '@/types';
 
 const props = defineProps<ChatPageProps>();
 
-useAuth();
+const auth = useAuth();
 
 const chat = useChatStore();
 const contacts = useContactsStore();
+const e2ee = useE2eeStore();
 const realtime = useRealtimeStore();
 const { getInitials } = useInitials();
 const mounted = useMounted();
@@ -55,6 +63,17 @@ onMounted(() => {
     // The address book powers the people panel, the group member picker and the
     // pending-request badge, so it is loaded once per chat session.
     void contacts.fetchAll();
+
+    const userId = auth.user.value?.id;
+
+    if (userId !== undefined) {
+        void e2ee
+            .bootstrap(userId)
+            .then(() => chat.refreshDecryption())
+            .catch(() => {
+                // Locked or unsupported encryption is surfaced by the banner.
+            });
+    }
 });
 onBeforeUnmount(() => realtime.stop());
 
@@ -148,9 +167,14 @@ const presenceLabel = computed(() =>
 
                     <div class="min-w-0 flex-1">
                         <p
-                            class="truncate text-[15px] font-semibold tracking-tight"
+                            class="flex items-center gap-1.5 truncate text-[15px] font-semibold tracking-tight"
                         >
                             {{ title }}
+                            <LockKeyhole
+                                v-if="chat.activeIsEncrypted"
+                                class="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400"
+                                aria-label="End-to-end encrypted"
+                            />
                         </p>
                         <p
                             v-if="typingLabel !== null"
@@ -197,6 +221,8 @@ const presenceLabel = computed(() =>
                         <RefreshCw v-else />
                     </Button>
                 </header>
+
+                <E2eeBanner />
 
                 <MessageTimeline />
 

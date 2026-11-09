@@ -18,7 +18,9 @@ use Illuminate\Support\Carbon;
  * @property string $sender_id
  * @property string $client_message_id
  * @property MessageType $type
+ * @property bool $is_encrypted
  * @property string|null $body
+ * @property array<string, mixed>|null $encryption
  * @property string|null $reply_to_message_id
  * @property Carbon|null $edited_at
  * @property Carbon|null $deleted_at
@@ -33,7 +35,9 @@ use Illuminate\Support\Carbon;
     'sender_id',
     'client_message_id',
     'type',
+    'is_encrypted',
     'body',
+    'encryption',
     'reply_to_message_id',
     'forwarded_from_message_id',
 ])]
@@ -49,6 +53,8 @@ class Message extends Model
         return [
             'seq' => 'integer',
             'type' => MessageType::class,
+            'is_encrypted' => 'boolean',
+            'encryption' => 'array',
             'edited_at' => 'datetime',
             'deleted_at' => 'datetime',
         ];

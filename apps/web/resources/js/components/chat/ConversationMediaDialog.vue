@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/dialog';
 import { Separator } from '@/components/ui/separator';
 import { Spinner } from '@/components/ui/spinner';
+import { useAttachmentUrls } from '@/composables/useAttachmentUrls';
 import {
     formatDuration,
     formatFileSize,
@@ -45,6 +46,11 @@ const loadedConversationId = ref<string | null>(null);
 const conversationId = computed(() => chat.activeConversationId);
 const attachments = computed(() => chat.mediaFor(conversationId.value));
 const hasMore = computed(() => chat.mediaHasMoreFor(conversationId.value));
+
+const { source: attachmentSource, href: attachmentHref } = useAttachmentUrls(
+    attachments,
+    conversationId,
+);
 
 function belongsToTab(
     attachment: MessageAttachment,
@@ -101,11 +107,7 @@ function duration(attachment: MessageAttachment): string {
 }
 
 function previewUrl(attachment: MessageAttachment): string | null {
-    if (attachment.kind === 'video') {
-        return attachment.thumbnail_url;
-    }
-
-    return attachment.thumbnail_url ?? attachment.url;
+    return attachmentSource(attachment, attachment.kind !== 'video');
 }
 
 function load(reset: boolean): void {
@@ -202,7 +204,7 @@ watch(conversationId, (id) => {
                     <a
                         v-for="attachment in visibleAttachments"
                         :key="attachment.id"
-                        :href="attachment.url ?? undefined"
+                        :href="attachmentHref(attachment) ?? undefined"
                         target="_blank"
                         rel="noopener noreferrer"
                         class="group relative aspect-square overflow-hidden rounded-lg bg-muted"
@@ -265,8 +267,8 @@ watch(conversationId, (id) => {
                                 </span>
                             </span>
                             <a
-                                v-if="attachment.url !== null"
-                                :href="attachment.url"
+                                v-if="attachmentHref(attachment) !== null"
+                                :href="attachmentHref(attachment) ?? undefined"
                                 :download="attachment.name"
                                 class="text-muted-foreground hover:text-foreground"
                                 :aria-label="`Download ${attachment.name}`"
@@ -275,8 +277,8 @@ watch(conversationId, (id) => {
                             </a>
                         </div>
                         <audio
-                            v-if="attachment.url !== null"
-                            :src="attachment.url"
+                            v-if="attachmentHref(attachment) !== null"
+                            :src="attachmentHref(attachment) ?? undefined"
                             controls
                             preload="none"
                             class="mt-2 w-full"
@@ -305,8 +307,8 @@ watch(conversationId, (id) => {
                             </span>
                         </span>
                         <a
-                            v-if="attachment.url !== null"
-                            :href="attachment.url"
+                            v-if="attachmentHref(attachment) !== null"
+                            :href="attachmentHref(attachment) ?? undefined"
                             :download="attachment.name"
                             class="text-muted-foreground hover:text-foreground"
                             :aria-label="`Download ${attachment.name}`"

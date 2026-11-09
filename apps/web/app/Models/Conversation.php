@@ -22,9 +22,12 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property string|null $last_message_id
  * @property int $next_message_seq
  * @property bool $history_visible_to_new_members
+ * @property bool $e2ee_enabled
+ * @property int|null $e2ee_key_version
+ * @property bool $e2ee_rotation_required
  * @property-read Message|null $lastMessage
  */
-#[Fillable(['type', 'title', 'description', 'avatar_key', 'created_by', 'direct_pair_key', 'last_message_id', 'next_message_seq', 'history_visible_to_new_members'])]
+#[Fillable(['type', 'title', 'description', 'avatar_key', 'created_by', 'direct_pair_key', 'last_message_id', 'next_message_seq', 'history_visible_to_new_members', 'e2ee_enabled', 'e2ee_key_version', 'e2ee_rotation_required'])]
 class Conversation extends Model
 {
     use HasUuids;
@@ -38,6 +41,9 @@ class Conversation extends Model
             'type' => ConversationType::class,
             'next_message_seq' => 'integer',
             'history_visible_to_new_members' => 'boolean',
+            'e2ee_enabled' => 'boolean',
+            'e2ee_key_version' => 'integer',
+            'e2ee_rotation_required' => 'boolean',
         ];
     }
 
@@ -93,6 +99,14 @@ class Conversation extends Model
     public function lastMessage(): BelongsTo
     {
         return $this->belongsTo(Message::class, 'last_message_id');
+    }
+
+    /**
+     * @return HasMany<ConversationE2eeKey, $this>
+     */
+    public function e2eeKeys(): HasMany
+    {
+        return $this->hasMany(ConversationE2eeKey::class);
     }
 
     /**

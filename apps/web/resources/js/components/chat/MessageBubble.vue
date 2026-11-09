@@ -26,6 +26,7 @@ import {
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Textarea } from '@/components/ui/textarea';
+import { useAttachmentUrls } from '@/composables/useAttachmentUrls';
 import { useAuth } from '@/composables/useAuth';
 import { useInitials } from '@/composables/useInitials';
 import {
@@ -66,6 +67,15 @@ const canTogglePin = computed(() => chat.canPin() && !isDeleted.value);
 
 const visibleAttachments = computed(() =>
     isDeleted.value ? [] : props.message.attachments,
+);
+
+const {
+    source: attachmentSource,
+    href: attachmentHref,
+    isFailed: attachmentFailed,
+} = useAttachmentUrls(
+    visibleAttachments,
+    computed(() => props.message.conversation_id),
 );
 
 const hasBody = computed(() => {
@@ -262,17 +272,15 @@ async function remove(): Promise<void> {
                         <a
                             v-if="
                                 attachment.kind === 'image' &&
-                                attachment.url !== null
+                                attachmentHref(attachment) !== null
                             "
-                            :href="attachment.url"
+                            :href="attachmentHref(attachment) ?? undefined"
                             target="_blank"
                             rel="noopener noreferrer"
                             class="block overflow-hidden rounded-xl"
                         >
                             <img
-                                :src="
-                                    attachment.thumbnail_url ?? attachment.url
-                                "
+                                :src="attachmentSource(attachment) ?? undefined"
                                 :alt="attachment.name"
                                 loading="lazy"
                                 class="max-h-72 w-full max-w-80 object-cover"
@@ -282,12 +290,12 @@ async function remove(): Promise<void> {
                         <div
                             v-else-if="
                                 attachment.kind === 'video' &&
-                                attachment.url !== null
+                                attachmentHref(attachment) !== null
                             "
                             class="relative"
                         >
                             <video
-                                :src="attachment.url"
+                                :src="attachmentHref(attachment) ?? undefined"
                                 :poster="attachment.thumbnail_url ?? undefined"
                                 controls
                                 preload="metadata"
@@ -307,12 +315,12 @@ async function remove(): Promise<void> {
                         <div
                             v-else-if="
                                 attachment.kind === 'audio' &&
-                                attachment.url !== null
+                                attachmentHref(attachment) !== null
                             "
                             class="flex w-64 max-w-full flex-col gap-0.5"
                         >
                             <audio
-                                :src="attachment.url"
+                                :src="attachmentHref(attachment) ?? undefined"
                                 controls
                                 preload="metadata"
                                 class="w-full"
@@ -329,24 +337,26 @@ async function remove(): Promise<void> {
                         </div>
 
                         <component
-                            :is="attachment.url !== null ? 'a' : 'span'"
+                            :is="
+                                attachmentHref(attachment) !== null
+                                    ? 'a'
+                                    : 'span'
+                            "
                             v-else
                             class="inline-flex max-w-full items-center gap-2.5 rounded-xl border border-border/60 bg-background/60 px-3 py-2 text-xs"
-                            :href="
-                                attachment.url !== null
-                                    ? attachment.url
+                            :href="attachmentHref(attachment) ?? undefined"
+                            :target="
+                                attachmentHref(attachment) !== null
+                                    ? '_blank'
                                     : undefined
                             "
-                            :target="
-                                attachment.url !== null ? '_blank' : undefined
-                            "
                             :rel="
-                                attachment.url !== null
+                                attachmentHref(attachment) !== null
                                     ? 'noopener noreferrer'
                                     : undefined
                             "
                             :download="
-                                attachment.url !== null
+                                attachmentHref(attachment) !== null
                                     ? attachment.name
                                     : undefined
                             "
@@ -365,6 +375,12 @@ async function remove(): Promise<void> {
                                     class="block text-[11px] text-muted-foreground"
                                 >
                                     {{ formatFileSize(attachment.size_bytes) }}
+                                </span>
+                                <span
+                                    v-if="attachmentFailed(attachment)"
+                                    class="block text-[11px] text-destructive"
+                                >
+                                    Unable to decrypt
                                 </span>
                             </span>
                         </component>
@@ -409,6 +425,18 @@ async function remove(): Promise<void> {
 
                 <p v-else-if="hasBody" class="break-words whitespace-pre-wrap">
                     {{ message.body }}
+                </p>
+                <p
+                    v-else-if="message.is_encrypted && message.decryption_failed"
+                    class="text-xs italic opacity-70"
+                >
+                    Unable to decrypt this message.
+                </p>
+                <p
+                    v-else-if="message.is_encrypted"
+                    class="text-xs italic opacity-70"
+                >
+                    Decrypting…
                 </p>
             </div>
 

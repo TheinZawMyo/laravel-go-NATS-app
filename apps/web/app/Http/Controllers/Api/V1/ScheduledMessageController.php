@@ -9,6 +9,7 @@ use App\Models\ScheduledMessage;
 use App\Services\ScheduledMessageService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 
 class ScheduledMessageController extends Controller
 {
@@ -38,7 +39,7 @@ class ScheduledMessageController extends Controller
             $conversation,
             $data['client_message_id'],
             $data['body'],
-            now()->parse($data['send_at']),
+            Carbon::parse($data['send_at']),
         );
 
         return response()->json(['data' => $scheduled], 201);

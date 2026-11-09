@@ -4,9 +4,12 @@ namespace App\Services;
 
 use App\Enums\AttachmentScanStatus;
 use App\Jobs\ProcessAttachment;
+use App\Models\Conversation;
+use App\Models\ConversationE2eeKey;
 use App\Models\MessageAttachment;
 use App\Models\User;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
@@ -75,12 +78,14 @@ class UploadService
     /**
      * Create the pending attachment row for a presigned upload.
      *
-     * @param  array{original_name: string, mime_type: string, size_bytes: int}  $declared
+     * @param  array{original_name: string, mime_type: string, size_bytes: int, is_encrypted?: bool, conversation_id?: string|null, key_version?: int|null, iv?: string|null, key_iv?: string|null, key_ciphertext?: string|null}  $declared
      */
     public function presign(User $uploader, array $declared): MessageAttachment
     {
         $mimeType = strtolower($declared['mime_type']);
         $extension = $this->extensionFor($mimeType);
+        $isEncrypted = (bool) ($declared['is_encrypted'] ?? false);
+        $conversation = $this->assertUploadScope($uploader, $declared, $isEncrypted);
 
         $attachment = MessageAttachment::query()->create([
             'uploader_id' => $uploader->id,
@@ -92,6 +97,12 @@ class UploadService
             ),
             'original_name' => $this->sanitizeName($declared['original_name']),
             'mime_type' => $mimeType,
+            'is_encrypted' => $isEncrypted,
+            'conversation_id' => $isEncrypted ? $conversation?->id : null,
+            'key_version' => $isEncrypted ? (int) ($declared['key_version'] ?? 0) : null,
+            'iv' => $isEncrypted ? (string) ($declared['iv'] ?? '') : null,
+            'key_iv' => $isEncrypted ? (string) ($declared['key_iv'] ?? '') : null,
+            'key_ciphertext' => $isEncrypted ? (string) ($declared['key_ciphertext'] ?? '') : null,
             'size_bytes' => $declared['size_bytes'],
             'scan_status' => AttachmentScanStatus::Pending->value,
             'expires_at' => Carbon::now()->addMinutes(
@@ -100,6 +111,70 @@ class UploadService
         ]);
 
         return $attachment;
+    }
+
+    /**
+     * @param  array{conversation_id?: string|null, key_version?: int|null}  $declared
+     */
+    private function assertUploadScope(User $uploader, array $declared, bool $isEncrypted): ?Conversation
+    {
+        $conversationId = $declared['conversation_id'] ?? null;
+
+        if (! $isEncrypted) {
+            return null;
+        }
+
+        if ($conversationId === null) {
+            throw ValidationException::withMessages([
+                'conversation_id' => __('Encrypted uploads must belong to a conversation.'),
+            ]);
+        }
+
+        $conversation = Conversation::query()->find($conversationId);
+
+        $isMember = $conversation !== null && $conversation->members()
+            ->where('users.id', $uploader->id)
+            ->whereNull('conversation_members.left_at')
+            ->exists();
+
+        if (! $isMember) {
+            throw ValidationException::withMessages([
+                'conversation_id' => __('You are not a member of this conversation.'),
+            ]);
+        }
+
+        if (! $conversation->e2ee_enabled) {
+            throw ValidationException::withMessages([
+                'conversation_id' => __('This conversation is not end-to-end encrypted.'),
+            ]);
+        }
+
+        if ($conversation->e2ee_rotation_required) {
+            throw ValidationException::withMessages([
+                'conversation_id' => __('Encryption keys must be rotated before uploading to this conversation.'),
+            ]);
+        }
+
+        $keyVersion = (int) ($declared['key_version'] ?? 0);
+
+        if ($keyVersion !== (int) $conversation->e2ee_key_version) {
+            throw ValidationException::withMessages([
+                'key_version' => __('This attachment uses an outdated encryption key.'),
+            ]);
+        }
+
+        $keyExists = ConversationE2eeKey::query()
+            ->where('conversation_id', $conversation->id)
+            ->where('key_version', $keyVersion)
+            ->exists();
+
+        if (! $keyExists) {
+            throw ValidationException::withMessages([
+                'key_version' => __('The encryption key for this conversation is missing.'),
+            ]);
+        }
+
+        return $conversation;
     }
 
     /**
@@ -148,6 +223,27 @@ class UploadService
             throw ValidationException::withMessages([
                 'upload' => __('The uploaded file does not match the declared size.'),
             ]);
+        }
+
+        // Ciphertext cannot be sniffed, scanned, or previewed server-side. The
+        // client encrypted the bytes before upload, so accept them as opaque
+        // and skip the scanner and media-processing pipeline.
+        if ($attachment->is_encrypted) {
+            $stored = Storage::disk($this->disk())->put($attachment->storage_key, $contents);
+
+            if ($stored === false) {
+                throw ValidationException::withMessages([
+                    'upload' => __('The file could not be stored.'),
+                ]);
+            }
+
+            $attachment->forceFill([
+                'uploaded_at' => Carbon::now(),
+                'scan_status' => AttachmentScanStatus::Skipped->value,
+                'scanned_at' => Carbon::now(),
+            ])->save();
+
+            return $attachment;
         }
 
         $this->assertSafeBytes($attachment, $contents);
@@ -220,7 +316,7 @@ class UploadService
      * @param  list<string>  $attachmentIds
      * @return list<MessageAttachment>
      */
-    public function claimForMessage(User $sender, array $attachmentIds): array
+    public function claimForMessage(User $sender, array $attachmentIds, ?Conversation $conversation = null): array
     {
         if ($attachmentIds === []) {
             return [];
@@ -248,7 +344,35 @@ class UploadService
             ]);
         }
 
+        if ($conversation !== null) {
+            $this->assertAttachmentsMatchConversation($rows, $conversation);
+        }
+
         return array_values($rows->all());
+    }
+
+    /**
+     * @param  Collection<int, MessageAttachment>  $rows
+     */
+    private function assertAttachmentsMatchConversation($rows, Conversation $conversation): void
+    {
+        foreach ($rows as $attachment) {
+            if ($conversation->e2ee_enabled) {
+                $matches = $attachment->is_encrypted
+                    && $attachment->conversation_id === $conversation->id
+                    && (int) $attachment->key_version === (int) $conversation->e2ee_key_version;
+
+                if (! $matches) {
+                    throw ValidationException::withMessages([
+                        'attachment_ids' => __('Encrypted attachments must use the current conversation key.'),
+                    ]);
+                }
+            } elseif ($attachment->is_encrypted) {
+                throw ValidationException::withMessages([
+                    'attachment_ids' => __('Encrypted attachments are not allowed in this conversation.'),
+                ]);
+            }
+        }
     }
 
     /**

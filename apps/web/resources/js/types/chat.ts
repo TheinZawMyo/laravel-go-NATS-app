@@ -10,11 +10,62 @@ export type MessageStatus = 'sending' | 'sent' | 'failed';
 
 export type AttachmentKind = 'image' | 'video' | 'audio' | 'file';
 
+export type E2eeEncryption = {
+    algorithm: 'AES-GCM';
+    key_version: number;
+    iv: string;
+    ciphertext: string;
+    aad: string;
+};
+
+export type E2eeKeyWrap = {
+    algorithm: string;
+    ephemeral_public_key: string;
+    iv: string;
+    ciphertext: string;
+};
+
+export type E2eeConversationKeyState = {
+    key_version: number;
+    created_by: string;
+    created_at: string;
+    wrap: E2eeKeyWrap | null;
+};
+
+export type E2eeMemberKey = {
+    user_id: string;
+    public_key: string | null;
+    algorithm: string | null;
+    fingerprint: string | null;
+};
+
+export type E2eeConversationState = {
+    enabled: boolean;
+    key_version: number | null;
+    rotation_required: boolean;
+    keys: E2eeConversationKeyState[];
+    member_keys: E2eeMemberKey[];
+};
+
+export type E2eeKeyBackup = {
+    ciphertext: string;
+    salt: string;
+    iv: string;
+    kdf: string;
+    iterations: number;
+    fingerprint: string | null;
+};
+
 export type MessageAttachment = {
     id: string;
     message_id: string | null;
     name: string;
     mime_type: string;
+    is_encrypted: boolean;
+    key_version: number | null;
+    iv: string | null;
+    key_iv: string | null;
+    key_ciphertext: string | null;
     kind: AttachmentKind;
     size_bytes: number;
     width: number | null;
@@ -42,7 +93,9 @@ export type ChatMessage = {
     client_message_id: string;
     sender: PublicUser;
     type: MessageType;
+    is_encrypted?: boolean;
     body: string | null;
+    encryption?: E2eeEncryption | null;
     attachments: MessageAttachment[];
     reply_to: ChatMessage | null;
     edited_at: string | null;
@@ -51,6 +104,7 @@ export type ChatMessage = {
     updated_at: string;
     status?: MessageStatus;
     error?: string | null;
+    decryption_failed?: boolean;
 };
 
 export type ConversationMember = {
@@ -70,6 +124,9 @@ export type Conversation = {
     next_message_seq: number;
     viewer_role: ConversationRole | null;
     history_visible_to_new_members: boolean;
+    e2ee_enabled: boolean;
+    e2ee_key_version: number | null;
+    e2ee_rotation_required: boolean;
     muted_until: string | null;
     is_muted: boolean;
     archived: boolean;

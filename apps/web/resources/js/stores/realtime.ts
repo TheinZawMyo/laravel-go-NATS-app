@@ -162,7 +162,7 @@ export const useRealtimeStore = defineStore('realtime', () => {
     function applyEvent(envelope: RealtimeEnvelope): void {
         switch (envelope.type) {
             case 'message.created':
-                applyCreatedMessage(envelope.data as ChatMessage);
+                void applyCreatedMessage(envelope.data as ChatMessage);
                 break;
             case 'message.updated':
             case 'message.deleted':
@@ -278,7 +278,8 @@ export const useRealtimeStore = defineStore('realtime', () => {
         chat.applyReceipt(data.conversation_id, data.user_id, data.seq);
     }
 
-    function applyCreatedMessage(message: ChatMessage): void {
+    async function applyCreatedMessage(message: ChatMessage): Promise<void> {
+        await chat.decryptMessageForDisplay(message);
         chat.applyRealtimeMessage(message);
         notify(message);
     }

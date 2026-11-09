@@ -55,6 +55,9 @@ class MessageController extends Controller
             [
                 'client_message_id' => (string) $validated['client_message_id'],
                 'body' => (string) ($validated['body'] ?? ''),
+                'encryption' => isset($validated['encryption'])
+                    ? (array) $validated['encryption']
+                    : null,
                 'attachment_ids' => array_values(array_map(
                     'strval',
                     $validated['attachment_ids'] ?? [],
@@ -78,8 +81,15 @@ class MessageController extends Controller
     ): MessageResource {
         $this->authorize('update', $message);
 
+        $encryption = $request->validated('encryption');
+
         return new MessageResource(
-            $messages->edit($request->user(), $message, $request->validated('body')),
+            $messages->edit(
+                $request->user(),
+                $message,
+                $request->validated('body'),
+                $encryption !== null ? (array) $encryption : null,
+            ),
         );
     }
 

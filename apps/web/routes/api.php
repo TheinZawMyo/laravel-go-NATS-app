@@ -7,9 +7,12 @@ use App\Http\Controllers\Api\V1\BlockController;
 use App\Http\Controllers\Api\V1\ContactController;
 use App\Http\Controllers\Api\V1\ContactRequestController;
 use App\Http\Controllers\Api\V1\ConversationController;
+use App\Http\Controllers\Api\V1\ConversationE2eeController;
 use App\Http\Controllers\Api\V1\ConversationMediaController;
 use App\Http\Controllers\Api\V1\DataExportController;
 use App\Http\Controllers\Api\V1\DeviceController;
+use App\Http\Controllers\Api\V1\E2eeBackupController;
+use App\Http\Controllers\Api\V1\E2eeKeyController;
 use App\Http\Controllers\Api\V1\GatewayTokenController;
 use App\Http\Controllers\Api\V1\GroupController;
 use App\Http\Controllers\Api\V1\GroupInviteController;
@@ -18,8 +21,8 @@ use App\Http\Controllers\Api\V1\MeController;
 use App\Http\Controllers\Api\V1\MessageAttachmentController;
 use App\Http\Controllers\Api\V1\MessageController;
 use App\Http\Controllers\Api\V1\MessagePinController;
-use App\Http\Controllers\Api\V1\SearchController;
 use App\Http\Controllers\Api\V1\ScheduledMessageController;
+use App\Http\Controllers\Api\V1\SearchController;
 use App\Http\Controllers\Api\V1\UploadController;
 use App\Http\Controllers\Api\V1\UserController;
 use App\Http\Controllers\Api\V1\UserReportController;
@@ -30,6 +33,11 @@ Route::middleware(['web', 'auth'])->prefix('v1')->group(function () {
     Route::get('me/export', DataExportController::class)->name('api.v1.me.export');
 
     Route::get('gateway/token', GatewayTokenController::class)->name('api.v1.gateway.token');
+
+    Route::get('e2ee/keys', [E2eeKeyController::class, 'show'])->name('api.v1.e2ee.keys.show');
+    Route::post('e2ee/keys', [E2eeKeyController::class, 'store'])->name('api.v1.e2ee.keys.store');
+    Route::get('e2ee/backup', [E2eeBackupController::class, 'show'])->name('api.v1.e2ee.backup.show');
+    Route::put('e2ee/backup', [E2eeBackupController::class, 'store'])->name('api.v1.e2ee.backup.store');
 
     Route::get('search/conversations', [SearchController::class, 'conversations'])
         ->middleware('throttle:search')
@@ -70,6 +78,10 @@ Route::middleware(['web', 'auth'])->prefix('v1')->group(function () {
     Route::get('conversations', [ConversationController::class, 'index'])->name('api.v1.conversations.index');
     Route::post('conversations/direct', [ConversationController::class, 'storeDirect'])->name('api.v1.conversations.store-direct');
     Route::get('conversations/{conversation}', [ConversationController::class, 'show'])->name('api.v1.conversations.show');
+    Route::get('conversations/{conversation}/e2ee', [ConversationE2eeController::class, 'show'])
+        ->name('api.v1.conversations.e2ee.show');
+    Route::post('conversations/{conversation}/e2ee/keys', [ConversationE2eeController::class, 'storeKey'])
+        ->name('api.v1.conversations.e2ee.keys.store');
     Route::post('conversations/{conversation}/read', [ConversationController::class, 'read'])->name('api.v1.conversations.read');
     Route::post('conversations/{conversation}/mute', [ConversationController::class, 'mute'])->name('api.v1.conversations.mute');
     Route::post('conversations/{conversation}/archive', [ConversationController::class, 'archive'])->name('api.v1.conversations.archive');

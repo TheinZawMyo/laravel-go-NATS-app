@@ -27,6 +27,14 @@ class UploadController extends Controller
             'original_name' => (string) $validated['original_name'],
             'mime_type' => (string) $validated['mime_type'],
             'size_bytes' => (int) $validated['size_bytes'],
+            'is_encrypted' => (bool) ($validated['is_encrypted'] ?? false),
+            'conversation_id' => $validated['conversation_id'] ?? null,
+            'key_version' => isset($validated['key_version'])
+                ? (int) $validated['key_version']
+                : null,
+            'iv' => $validated['iv'] ?? null,
+            'key_iv' => $validated['key_iv'] ?? null,
+            'key_ciphertext' => $validated['key_ciphertext'] ?? null,
         ]);
 
         return (new MessageAttachmentResource($attachment))

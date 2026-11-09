@@ -19,6 +19,12 @@ class ScheduledMessageService
 
     public function schedule(User $sender, Conversation $conversation, string $clientMessageId, string $body, Carbon $sendAt): ScheduledMessage
     {
+        if ($conversation->e2ee_enabled) {
+            throw ValidationException::withMessages([
+                'body' => __('Scheduled messages are not available in end-to-end encrypted conversations.'),
+            ]);
+        }
+
         $existing = ScheduledMessage::query()
             ->where('sender_id', $sender->id)
             ->where('client_message_id', $clientMessageId)

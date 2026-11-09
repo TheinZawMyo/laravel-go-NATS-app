@@ -32,6 +32,7 @@ class MessageService
         private readonly RealtimeEventPublisher $events,
         private readonly ContactService $contacts,
         private readonly UploadService $uploads,
+        private readonly E2eeService $e2ee,
     ) {}
 
     /**
@@ -83,18 +84,19 @@ class MessageService
     /**
      * Persist a message transactionally and allocate its conversation sequence.
      *
-     * @param  array{client_message_id: string, body?: string, attachment_ids?: list<string>, type?: string, reply_to_message_id?: string|null}  $data
+     * @param  array{client_message_id: string, body?: string, encryption?: array<string, mixed>|null, attachment_ids?: list<string>, type?: string, reply_to_message_id?: string|null}  $data
      * @return array{0: Message, 1: bool} The message and whether it was newly created.
      */
     public function send(User $sender, Conversation $conversation, array $data): array
     {
         $body = trim($data['body'] ?? '');
+        $encryption = $data['encryption'] ?? null;
         $attachmentIds = array_values(array_unique(array_map(
             'strval',
             $data['attachment_ids'] ?? [],
         )));
 
-        if ($body === '' && $attachmentIds === []) {
+        if ($body === '' && $attachmentIds === [] && $encryption === null) {
             throw ValidationException::withMessages([
                 'body' => __('A message body or at least one attachment is required.'),
             ]);
@@ -122,7 +124,7 @@ class MessageService
         }
 
         try {
-            return DB::transaction(function () use ($sender, $conversation, $clientMessageId, $body, $replyToMessageId, $type, $attachmentIds): array {
+            return DB::transaction(function () use ($sender, $conversation, $clientMessageId, $body, $encryption, $replyToMessageId, $type, $attachmentIds): array {
                 $lockedConversation = Conversation::query()
                     ->lockForUpdate()
                     ->findOrFail($conversation->id);
@@ -139,7 +141,25 @@ class MessageService
 
                 $this->assertNotBlocked($sender, $lockedConversation);
 
-                $attachments = $this->uploads->claimForMessage($sender, $attachmentIds);
+                $this->e2ee->assertConversationReadyForSend($lockedConversation);
+
+                if ($encryption !== null) {
+                    $this->e2ee->assertSendEncryption(
+                        $lockedConversation,
+                        $encryption,
+                        $clientMessageId,
+                    );
+                } elseif ($lockedConversation->e2ee_enabled && $body !== '') {
+                    throw ValidationException::withMessages([
+                        'encryption' => __('This conversation is end-to-end encrypted.'),
+                    ]);
+                }
+
+                $attachments = $this->uploads->claimForMessage(
+                    $sender,
+                    $attachmentIds,
+                    $lockedConversation,
+                );
 
                 $seq = (int) $lockedConversation->next_message_seq + 1;
 
@@ -149,7 +169,9 @@ class MessageService
                     'sender_id' => $sender->id,
                     'client_message_id' => $clientMessageId,
                     'type' => $type,
-                    'body' => $body === '' ? null : $body,
+                    'is_encrypted' => $encryption !== null,
+                    'body' => $encryption !== null || $body === '' ? null : $body,
+                    'encryption' => $encryption,
                     'reply_to_message_id' => $replyToMessageId,
                 ]);
 
@@ -199,15 +221,12 @@ class MessageService
         }
     }
 
-    public function edit(User $editor, Message $message, string $body): Message
+    /**
+     * @param  array<string, mixed>|null  $encryption
+     */
+    public function edit(User $editor, Message $message, ?string $body, ?array $encryption = null): Message
     {
-        $body = trim($body);
-
-        if ($body === '') {
-            throw ValidationException::withMessages([
-                'body' => __('A message body is required.'),
-            ]);
-        }
+        $body = trim((string) $body);
 
         if ($message->deleted_at !== null) {
             throw ValidationException::withMessages([
@@ -215,15 +234,45 @@ class MessageService
             ]);
         }
 
-        if ($message->body === $body) {
-            return $message->load(['sender', 'replyTo.sender']);
+        $isEncrypted = (bool) $message->is_encrypted;
+
+        if ($isEncrypted) {
+            if ($encryption === null) {
+                throw ValidationException::withMessages([
+                    'encryption' => __('An encrypted message body is required.'),
+                ]);
+            }
+
+            $this->e2ee->assertEditEncryption($message, $encryption);
+
+            if ($this->sameEncryption($message->encryption, $encryption)) {
+                return $message->load(['sender', 'replyTo.sender']);
+            }
+        } else {
+            if ($body === '') {
+                throw ValidationException::withMessages([
+                    'body' => __('A message body is required.'),
+                ]);
+            }
+
+            if ($encryption !== null) {
+                throw ValidationException::withMessages([
+                    'encryption' => __('This message is not end-to-end encrypted.'),
+                ]);
+            }
+
+            if ($message->body === $body) {
+                return $message->load(['sender', 'replyTo.sender']);
+            }
         }
 
-        DB::transaction(function () use ($editor, $message, $body): void {
+        DB::transaction(function () use ($editor, $message, $body, $encryption, $isEncrypted): void {
             $previousBody = $message->body;
+            $previousEncryption = $message->encryption;
 
             $message->forceFill([
-                'body' => $body,
+                'body' => $isEncrypted ? null : $body,
+                'encryption' => $isEncrypted ? $encryption : null,
                 'edited_at' => Carbon::now(),
             ])->save();
 
@@ -231,7 +280,9 @@ class MessageService
                 'message_id' => $message->id,
                 'editor_id' => $editor->id,
                 'previous_body' => $previousBody,
-                'current_body' => $body,
+                'current_body' => $isEncrypted ? null : $body,
+                'previous_encryption' => $previousEncryption,
+                'current_encryption' => $isEncrypted ? $encryption : null,
             ]);
 
             $this->events->messageUpdated($message->load(['sender', 'replyTo.sender']));
@@ -359,6 +410,25 @@ class MessageService
             ->where('conversation_id', $message->conversation_id)
             ->where('message_id', $message->id)
             ->first();
+    }
+
+    /**
+     * @param  array<string, mixed>|null  $a
+     * @param  array<string, mixed>|null  $b
+     */
+    private function sameEncryption(?array $a, ?array $b): bool
+    {
+        if ($a === null || $b === null) {
+            return $a === $b;
+        }
+
+        foreach (['algorithm', 'key_version', 'iv', 'ciphertext', 'aad'] as $field) {
+            if (($a[$field] ?? null) !== ($b[$field] ?? null)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private function findByIdempotencyKey(User $sender, string $clientMessageId): ?Message

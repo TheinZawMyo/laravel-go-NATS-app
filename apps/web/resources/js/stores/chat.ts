@@ -2,11 +2,13 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { ApiError, apiRequest } from '@/lib/http';
 import { useAuthStore } from '@/stores/auth';
+import { useE2eeStore } from '@/stores/e2ee';
 import type {
     ChatMessage,
     Conversation,
     ConversationInvite,
     ConversationRole,
+    E2eeEncryption,
     MediaPage,
     MessageAttachment,
     MessagePage,
@@ -132,6 +134,7 @@ async function messageRequest(
 
 export const useChatStore = defineStore('chat', () => {
     const auth = useAuthStore();
+    const e2ee = useE2eeStore();
 
     const conversations = ref<Conversation[]>([]);
     const activeConversationId = ref<string | null>(null);
@@ -183,6 +186,104 @@ export const useChatStore = defineStore('chat', () => {
                     conversation.id === activeConversationId.value,
             ) ?? null,
     );
+
+    const activeIsEncrypted = computed(
+        () => activeConversation.value?.e2ee_enabled === true,
+    );
+
+    async function decryptInto(message: ChatMessage): Promise<void> {
+        if (
+            message.is_encrypted !== true ||
+            message.encryption === null ||
+            message.encryption === undefined ||
+            message.body !== null
+        ) {
+            return;
+        }
+
+        try {
+            message.body = await e2ee.decryptMessage(
+                message.conversation_id,
+                message.encryption,
+            );
+            message.decryption_failed = false;
+        } catch {
+            message.decryption_failed = true;
+        }
+    }
+
+    async function decryptList(
+        conversationId: string,
+        list: ChatMessage[],
+    ): Promise<void> {
+        const encrypted = list.filter(
+            (message) =>
+                message.is_encrypted === true &&
+                message.encryption !== null &&
+                message.encryption !== undefined &&
+                message.body === null,
+        );
+
+        for (const message of encrypted) {
+            try {
+                message.body = await e2ee.decryptMessage(
+                    conversationId,
+                    message.encryption as E2eeEncryption,
+                );
+                message.decryption_failed = false;
+            } catch {
+                message.decryption_failed = true;
+            }
+        }
+    }
+
+    async function ensureConversationKeys(
+        conversationId: string,
+    ): Promise<void> {
+        const conversation = conversations.value.find(
+            (current) => current.id === conversationId,
+        );
+
+        if (conversation?.e2ee_enabled !== true) {
+            return;
+        }
+
+        try {
+            await e2ee.ensureConversationReady(conversation);
+        } catch {
+            // Locked devices surface the state in the composer; key setup is
+            // retried when the user unlocks.
+        }
+    }
+
+    async function refreshDecryption(): Promise<void> {
+        const conversation = activeConversation.value;
+
+        if (conversation === null) {
+            return;
+        }
+
+        await ensureConversationKeys(conversation.id);
+        await decryptList(conversation.id, messages.value);
+
+        for (const current of conversations.value) {
+            if (current.last_message?.is_encrypted === true) {
+                await decryptInto(current.last_message);
+            }
+        }
+    }
+
+    async function enableActiveEncryption(): Promise<void> {
+        const conversation = activeConversation.value;
+
+        if (conversation === null) {
+            return;
+        }
+
+        await e2ee.enableConversation(conversation);
+        await refreshConversation(conversation.id);
+        await refreshDecryption();
+    }
 
     function noteAppliedSeq(conversationId: string, seq: number): void {
         if (!Number.isFinite(seq) || seq <= 0) {
@@ -383,6 +484,7 @@ export const useChatStore = defineStore('chat', () => {
             noteAppliedSeq(latest.conversation_id, latest.seq);
             void markRead(latest.seq);
         }
+
     }
 
     function upsertConversation(conversation: Conversation): void {
@@ -461,6 +563,13 @@ export const useChatStore = defineStore('chat', () => {
             );
 
             upsertConversation(response.data);
+
+            if (
+                activeConversationId.value === conversationId &&
+                response.data.e2ee_enabled
+            ) {
+                await ensureConversationKeys(conversationId);
+            }
         } catch (requestError) {
             if (
                 requestError instanceof ApiError &&
@@ -517,9 +626,11 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         messages.value = sortMessages(messages.value);
+        void decryptInto(normalized);
     }
 
     function applyRealtimeMessage(message: ChatMessage): void {
+        void decryptInto(message);
         noteAppliedSeq(message.conversation_id, message.seq);
 
         const conversation = conversations.value.find(
@@ -612,6 +723,10 @@ export const useChatStore = defineStore('chat', () => {
             hasMore.value = page.meta.has_more;
             nextCursor.value = page.meta.next_cursor;
 
+            void ensureConversationKeys(conversationId).then(() =>
+                decryptList(conversationId, messages.value),
+            );
+
             const latest = messages.value.at(-1);
 
             if (latest !== undefined) {
@@ -665,6 +780,7 @@ export const useChatStore = defineStore('chat', () => {
             );
 
             messages.value = sortMessages([...older, ...messages.value]);
+            void decryptList(activeConversationId.value, older);
             hasMore.value = page.meta.has_more;
             nextCursor.value = page.meta.next_cursor;
         } catch (requestError) {
@@ -687,6 +803,7 @@ export const useChatStore = defineStore('chat', () => {
             );
 
             page.data.forEach(upsertMessage);
+            void decryptList(activeConversationId.value, page.data);
 
             if (!hasMore.value && page.meta.has_more) {
                 hasMore.value = true;
@@ -747,6 +864,22 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         const clientMessageId = uuid();
+        let encryption: E2eeEncryption | null = null;
+
+        if (conversation.e2ee_enabled && trimmed !== '') {
+            try {
+                encryption = await e2ee.encryptForMessage(
+                    conversation.id,
+                    clientMessageId,
+                    trimmed,
+                );
+            } catch (encryptionError) {
+                error.value = errorMessage(encryptionError);
+
+                return null;
+            }
+        }
+
         const now = new Date().toISOString();
         const highestSeq = messages.value.reduce(
             (highest, message) => Math.max(highest, message.seq),
@@ -760,7 +893,9 @@ export const useChatStore = defineStore('chat', () => {
             client_message_id: clientMessageId,
             sender: sender as PublicUser,
             type: 'text',
+            is_encrypted: conversation.e2ee_enabled,
             body: trimmed === '' ? null : trimmed,
+            encryption,
             attachments,
             reply_to:
                 messages.value.find((message) => message.id === replyToId) ??
@@ -784,7 +919,8 @@ export const useChatStore = defineStore('chat', () => {
                     method: 'POST',
                     body: {
                         client_message_id: clientMessageId,
-                        body: trimmed,
+                        body: encryption !== null ? null : trimmed,
+                        encryption: encryption ?? undefined,
                         attachment_ids: attachments.map(
                             (attachment) => attachment.id,
                         ),
@@ -831,13 +967,32 @@ export const useChatStore = defineStore('chat', () => {
         message.error = null;
 
         try {
+            const conversation = conversations.value.find(
+                (current) => current.id === message.conversation_id,
+            );
+            let encryption = message.encryption ?? null;
+
+            if (
+                conversation?.e2ee_enabled === true &&
+                message.body !== null &&
+                message.body.trim() !== ''
+            ) {
+                encryption = await e2ee.encryptForMessage(
+                    message.conversation_id,
+                    message.client_message_id,
+                    message.body,
+                );
+                message.encryption = encryption;
+            }
+
             const sent = await messageRequest(
                 `/api/v1/conversations/${message.conversation_id}/messages`,
                 {
                     method: 'POST',
                     body: {
                         client_message_id: message.client_message_id,
-                        body: message.body ?? '',
+                        body: encryption !== null ? null : (message.body ?? ''),
+                        encryption: encryption ?? undefined,
                         attachment_ids: attachmentIds,
                         reply_to_message_id: message.reply_to?.id ?? null,
                     },
@@ -856,9 +1011,22 @@ export const useChatStore = defineStore('chat', () => {
         message: ChatMessage,
         body: string,
     ): Promise<ChatMessage> {
+        let encryption: E2eeEncryption | null = null;
+
+        if (message.is_encrypted === true) {
+            encryption = await e2ee.encryptForEdit(
+                message.conversation_id,
+                message.id,
+                body,
+            );
+        }
+
         const updated = await messageRequest(`/api/v1/messages/${message.id}`, {
             method: 'PATCH',
-            body: { body },
+            body: {
+                body: encryption !== null ? null : body,
+                encryption: encryption ?? undefined,
+            },
         });
 
         upsertMessage(updated);
@@ -1296,6 +1464,10 @@ export const useChatStore = defineStore('chat', () => {
         loadOlder,
         refreshMessages,
         markRead,
+        activeIsEncrypted,
+        enableActiveEncryption,
+        refreshDecryption,
+        decryptMessageForDisplay: decryptInto,
         sendMessage,
         retryMessage,
         editMessage,

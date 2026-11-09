@@ -37,6 +37,9 @@ const conversation: Conversation = {
     next_message_seq: 0,
     viewer_role: 'member',
     history_visible_to_new_members: false,
+    e2ee_enabled: false,
+    e2ee_key_version: null,
+    e2ee_rotation_required: false,
     muted_until: null,
     is_muted: false,
     archived: false,
@@ -53,6 +56,11 @@ function attachment(): MessageAttachment {
         message_id: null,
         name: 'report.pdf',
         mime_type: 'application/pdf',
+        is_encrypted: false,
+        key_version: null,
+        iv: null,
+        key_iv: null,
+        key_ciphertext: null,
         kind: 'file',
         size_bytes: 2048,
         width: null,
@@ -188,5 +196,53 @@ describe('MessageComposer uploads', () => {
 
         const send = wrapper.get('[aria-label="Send message"]');
         expect(send.find('.animate-spin').exists()).toBe(false);
+    });
+});
+
+describe('MessageComposer scheduling', () => {
+    beforeEach(() => {
+        setActivePinia(createPinia());
+        useChatStore().initialize({
+            conversations: [conversation],
+            activeConversation: conversation,
+            activeMessages: [],
+            activeHasMore: false,
+            activeNextCursor: null,
+        });
+    });
+
+    it('allows choosing a local date and time for a draft', async () => {
+        const wrapper = mount(MessageComposer);
+        await wrapper.get('textarea').setValue('Send this later');
+        await wrapper.get('[aria-label="Schedule message"]').trigger('click');
+
+        const picker = wrapper.get('input[type="datetime-local"]');
+        expect(picker.attributes('disabled')).toBeUndefined();
+        expect(picker.attributes('min')).toBeTruthy();
+
+        await picker.setValue('2026-11-10T09:30');
+        expect((picker.element as HTMLInputElement).value).toBe(
+            '2026-11-10T09:30',
+        );
+    });
+
+    it('explains that scheduling is unavailable in encrypted conversations', async () => {
+        const encryptedConversation = { ...conversation, e2ee_enabled: true };
+        useChatStore().initialize({
+            conversations: [encryptedConversation],
+            activeConversation: encryptedConversation,
+            activeMessages: [],
+            activeHasMore: false,
+            activeNextCursor: null,
+        });
+
+        const wrapper = mount(MessageComposer);
+        await wrapper.get('textarea').setValue('Send this later');
+
+        const schedule = wrapper.get('[aria-label="Schedule message"]');
+        expect(schedule.attributes('disabled')).toBeDefined();
+        expect(schedule.attributes('title')).toContain(
+            'end-to-end encrypted conversations',
+        );
     });
 });

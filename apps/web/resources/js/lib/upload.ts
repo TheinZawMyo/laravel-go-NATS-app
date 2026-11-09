@@ -63,14 +63,25 @@ export function resolveMimeType(file: File): string {
     return EXTENSION_MIME_TYPES[extension] ?? 'application/octet-stream';
 }
 
+export type UploadEncryption = {
+    conversationId: string;
+    keyVersion: number;
+    iv: string;
+    keyIv: string;
+    keyCiphertext: string;
+    originalName: string;
+    mimeType: string;
+};
+
 /**
  * Reserve a storage slot and upload the bytes to the signed URL.
  * Returns the attachment id to reference from the message.
  */
 export async function uploadFile(
-    file: File,
+    file: File | Blob,
     onProgress?: (percent: number) => void,
     signal?: AbortSignal,
+    encryption?: UploadEncryption,
 ): Promise<MessageAttachment> {
     if (file.size === 0) {
         throw new ApiError('This file is empty.', 422);
@@ -80,15 +91,36 @@ export async function uploadFile(
         throw new ApiError('This file exceeds the 25 MB limit.', 422);
     }
 
+    const original = file instanceof File ? file : null;
+    const originalName =
+        encryption?.originalName ?? original?.name ?? 'attachment';
+    const mimeType =
+        encryption?.mimeType ??
+        (original !== null
+            ? resolveMimeType(original)
+            : 'application/octet-stream');
+
     const presigned = await apiRequest<PresignedUpload>(
         '/api/v1/uploads/presign',
         {
             method: 'POST',
-            body: {
-                original_name: file.name,
-                mime_type: resolveMimeType(file),
-                size_bytes: file.size,
-            },
+            body: encryption === undefined
+                ? {
+                      original_name: originalName,
+                      mime_type: mimeType,
+                      size_bytes: file.size,
+                  }
+                : {
+                      original_name: originalName,
+                      mime_type: mimeType,
+                      size_bytes: file.size,
+                      is_encrypted: true,
+                      conversation_id: encryption.conversationId,
+                      key_version: encryption.keyVersion,
+                      iv: encryption.iv,
+                      key_iv: encryption.keyIv,
+                      key_ciphertext: encryption.keyCiphertext,
+                  },
             signal,
         },
     );
@@ -104,7 +136,7 @@ export async function uploadFile(
  */
 function putFile(
     url: string,
-    file: File,
+    file: Blob,
     onProgress?: (percent: number) => void,
     signal?: AbortSignal,
 ): Promise<void> {

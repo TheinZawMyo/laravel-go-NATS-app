@@ -23,7 +23,9 @@ class MessageResource extends JsonResource
             'client_message_id' => $this->client_message_id,
             'sender' => (new PublicUserResource($this->sender))->resolve($request),
             'type' => $this->type->value,
+            'is_encrypted' => (bool) $this->is_encrypted,
             'body' => $this->deleted_at === null ? $this->body : null,
+            'encryption' => $this->deleted_at === null ? $this->encryption : null,
             'attachments' => $this->deleted_at === null
                 ? MessageAttachmentResource::collection($this->resource->attachments)
                     ->resolve($request)
