@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -35,6 +36,8 @@ type Config struct {
 
 	EventSubjectPrefix  string
 	TypingSubjectPrefix string
+	CallSubjectPrefix   string
+	CallICEServers      string
 
 	// Durable broker. When JetStream is enabled the gateway consumes outbox
 	// events from a durable consumer so events survive gateway restarts.
@@ -155,6 +158,8 @@ func Load() (Config, error) {
 
 		EventSubjectPrefix:  env("GATEWAY_EVENT_SUBJECT_PREFIX", "chat.events."),
 		TypingSubjectPrefix: env("GATEWAY_TYPING_SUBJECT_PREFIX", "chat.typing."),
+		CallSubjectPrefix:   env("GATEWAY_CALL_SUBJECT_PREFIX", "chat.calls."),
+		CallICEServers:      env("GATEWAY_ICE_SERVERS", `[{"urls":["stun:stun.l.google.com:19302"]}]`),
 
 		JetStreamEnabled:  jetStreamEnabled,
 		JetStreamStream:   env("GATEWAY_JETSTREAM_STREAM", "CHAT_EVENTS"),
@@ -212,6 +217,10 @@ func (c Config) validate() error {
 		return fmt.Errorf("GATEWAY_EVENT_SUBJECT_PREFIX must not be empty")
 	case strings.TrimSpace(c.TypingSubjectPrefix) == "":
 		return fmt.Errorf("GATEWAY_TYPING_SUBJECT_PREFIX must not be empty")
+	case strings.TrimSpace(c.CallSubjectPrefix) == "":
+		return fmt.Errorf("GATEWAY_CALL_SUBJECT_PREFIX must not be empty")
+	case !json.Valid([]byte(c.CallICEServers)) || len(c.CallICEServers) == 0 || c.CallICEServers[0] != '[':
+		return fmt.Errorf("GATEWAY_ICE_SERVERS must be a JSON array")
 	case strings.TrimSpace(c.PresenceSubjectPrefix) == "":
 		return fmt.Errorf("GATEWAY_PRESENCE_SUBJECT_PREFIX must not be empty")
 	case strings.TrimSpace(c.ReceiptSubjectPrefix) == "":

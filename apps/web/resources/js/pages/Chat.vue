@@ -8,6 +8,7 @@ import {
 } from '@lucide/vue';
 import { computed, onBeforeUnmount, onMounted, watch } from 'vue';
 import ConnectionStatus from '@/components/chat/ConnectionStatus.vue';
+import CallControls from '@/components/chat/CallControls.vue';
 import ConversationActionsMenu from '@/components/chat/ConversationActionsMenu.vue';
 import ConversationList from '@/components/chat/ConversationList.vue';
 import ConversationMediaDialog from '@/components/chat/ConversationMediaDialog.vue';
@@ -260,4 +261,11 @@ const presenceLabel = computed(() =>
             </div>
         </section>
     </div>
+    <CallControls
+        :conversation-id="chat.activeConversation?.id ?? ''"
+        :recipient-id="chat.activeConversation?.type === 'direct' ? participant?.id ?? null : null"
+        :recipient-name="title"
+        :enabled="chat.activeConversation?.type === 'direct'"
+        :video-enabled="false"
+    />
 </template>

@@ -19,6 +19,7 @@ const (
 	ClientReceipt      = "receipt.delivered"
 	ClientReadReceipt  = "receipt.read"
 	ClientPing         = "ping"
+	ClientCallSignal   = "call.signal"
 
 	ServerReady               = "connection.ready"
 	ServerError               = "connection.error"
@@ -33,7 +34,16 @@ const (
 	ServerConversationUpdated = "conversation.updated"
 	ServerSubscribed          = "conversation.subscribed"
 	ServerSyncRequired        = "sync.required"
+	ServerCallSignal          = "call.signal"
 )
+
+type CallSignalData struct {
+	ConversationID string          `json:"conversation_id"`
+	FromUserID     string          `json:"from_user_id"`
+	ToUserID       string          `json:"to_user_id"`
+	CallID         string          `json:"call_id"`
+	Signal         json.RawMessage `json:"signal"`
+}
 
 type ClientMessage struct {
 	Type      string          `json:"type"`

@@ -490,7 +490,7 @@ Only start these after the core messaging flow is reliable.
 
 ## Optional Features
 
-- [ ] Voice and video calls using WebRTC.
+- [x] Voice and video calls using WebRTC. (direct conversations use browser `RTCPeerConnection` with a Go Pion media relay, caller pending/cancel state, incoming caller identification with answer/decline, accept-confirmed duration, audio/video call layouts, mute/camera controls, and authorized transient signaling; video calling is temporarily disabled in the Chat frontend while caller-side freezes are investigated; production deployments should configure TURN servers and ICE UDP reachability)
 - [ ] Screen sharing.
 - [x] End-to-end encryption (E2EE) baseline. (browser-side message and attachment encryption, per-conversation key versions, per-member key wraps, and passphrase-encrypted identity backup are implemented; production hardening and multi-device support remain below)
 - [ ] Disappearing messages.

@@ -157,6 +157,8 @@ func (c *Connection) run() {
 			if err == nil {
 				c.sendEnvelope(envelope)
 			}
+		case protocol.ClientCallSignal:
+			c.callSignal(message)
 		default:
 			c.sendError(message.RequestID, "unsupported_type", "This message type is not supported.")
 		}
@@ -478,6 +480,30 @@ func (c *Connection) typing(message protocol.ClientMessage, isTyping bool) {
 		IsTyping:       isTyping,
 		ExpiresAt:      expiresAt.Format(time.RFC3339),
 	})
+}
+
+// callSignal relays short lived WebRTC negotiation data between active members
+// of a conversation. Call signaling does not require a message subscription.
+func (c *Connection) callSignal(message protocol.ClientMessage) {
+	var data protocol.CallSignalData
+	if err := json.Unmarshal(message.Data, &data); err != nil || !validID(data.ConversationID) || !validID(data.ToUserID) || !validID(data.CallID) || len(data.Signal) == 0 || len(data.Signal) > 64*1024 {
+		c.sendError(message.RequestID, "invalid_payload", "A valid call signal is required.")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.server.ctx, 3*time.Second)
+	allowed, err := c.server.store.CanAccessConversation(ctx, c.userID, data.ConversationID)
+	targetAllowed, targetErr := c.server.store.CanAccessConversation(ctx, data.ToUserID, data.ConversationID)
+	cancel()
+	if err != nil || targetErr != nil || !allowed || !targetAllowed || data.ToUserID == c.userID {
+		c.sendError(message.RequestID, "forbidden", "You cannot call from this conversation.")
+		return
+	}
+	ctx, cancel = context.WithTimeout(c.server.ctx, 35*time.Second)
+	defer cancel()
+	if err := c.server.calls.HandleSignal(ctx, data.ConversationID, c.userID, data.ToUserID, data.CallID, data.Signal); err != nil {
+		c.server.logger.Warn("WebRTC call signal failed", "call_id", data.CallID, "user_id", c.userID, "error", err)
+		c.sendError(message.RequestID, "call_failed", "The WebRTC call could not be established.")
+	}
 }
 
 func (c *Connection) receipt(message protocol.ClientMessage, read bool) {

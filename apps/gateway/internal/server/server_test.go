@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/pion/webrtc/v4"
 
 	"chatapp/gateway/internal/config"
 	"chatapp/gateway/internal/protocol"
@@ -59,6 +60,8 @@ func testConfig() config.Config {
 		InboundBurst:          1000,
 		EventSubjectPrefix:    "chat.events.",
 		TypingSubjectPrefix:   "chat.typing.",
+		CallSubjectPrefix:     "chat.calls.",
+		CallICEServers:        "[]",
 		PresenceSubjectPrefix: "chat.presence.",
 		ReceiptSubjectPrefix:  "chat.receipts.",
 		PresenceSubjectTTL:    90 * time.Second,
@@ -188,8 +191,10 @@ func waitForSubscription(t *testing.T, server *Server, conversationID string) {
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		clients := server.clients.All()
-		if len(clients) == 1 && server.clients.IsSubscribed(clients[0], conversationID) {
-			return
+		for _, client := range clients {
+			if server.clients.IsSubscribed(client, conversationID) {
+				return
+			}
 		}
 
 		time.Sleep(5 * time.Millisecond)
@@ -293,6 +298,231 @@ func TestConnectionAuthenticatesSubscribesAndReceivesEvents(t *testing.T) {
 
 	if pong.Type != protocol.ServerPong {
 		t.Fatalf("expected pong, got %s", pong.Type)
+	}
+}
+
+func TestCallSignalRingsTargetUserWithoutConversationSubscription(t *testing.T) {
+	conversationID := "11111111-1111-4111-8111-111111111111"
+	callerID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	receiverID := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	callID := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+
+	_, httpServer := testServer(t, &fakeAuthorizer{
+		active: true,
+		access: map[string]bool{conversationID: true},
+	})
+
+	caller := dial(t, httpServer, "http://localhost:8000")
+	authenticate(t, caller, signToken(t, testSecret, callerID, time.Now().Add(time.Minute)))
+	receiver := dial(t, httpServer, "http://localhost:8000")
+	authenticate(t, receiver, signToken(t, testSecret, receiverID, time.Now().Add(time.Minute)))
+
+	callerPeer, offer := pionOffer(t, false)
+	defer callerPeer.Close()
+
+	send(t, caller, map[string]any{
+		"type": protocol.ClientCallSignal,
+		"id":   "call-request-1",
+		"data": map[string]any{
+			"conversation_id": conversationID,
+			"to_user_id":      receiverID,
+			"call_id":         callID,
+			"signal":          map[string]any{"kind": "offer", "media": map[string]bool{"video": false}, "description": offer},
+		},
+	})
+
+	callerEnvelope := readCallSignalKind(t, caller, "answer")
+	if callerEnvelope.Type != protocol.ServerCallSignal || callerEnvelope.ConversationID == nil || *callerEnvelope.ConversationID != conversationID {
+		t.Fatalf("expected Pion answer for the caller, got %+v", callerEnvelope)
+	}
+	var data protocol.CallSignalData
+	if err := json.Unmarshal(callerEnvelope.Data, &data); err != nil {
+		t.Fatalf("decode caller answer: %v", err)
+	}
+	if data.FromUserID != receiverID || data.ToUserID != callerID || data.CallID != callID {
+		t.Fatalf("unexpected Pion answer routing data: %+v", data)
+	}
+	var answerSignal struct {
+		Kind        string                    `json:"kind"`
+		Description webrtc.SessionDescription `json:"description"`
+	}
+	if err := json.Unmarshal(data.Signal, &answerSignal); err != nil || answerSignal.Kind != "answer" || answerSignal.Description.Type != webrtc.SDPTypeAnswer {
+		t.Fatalf("unexpected Pion answer payload: %s (%v)", data.Signal, err)
+	}
+
+	calleeEnvelope := readCallSignalKind(t, receiver, "offer")
+	if calleeEnvelope.Type != protocol.ServerCallSignal {
+		t.Fatalf("expected Pion offer to the callee, got %s", calleeEnvelope.Type)
+	}
+	if err := json.Unmarshal(calleeEnvelope.Data, &data); err != nil {
+		t.Fatalf("decode callee offer: %v", err)
+	}
+	var calleeSignal struct {
+		Kind        string                    `json:"kind"`
+		Description webrtc.SessionDescription `json:"description"`
+	}
+	if err := json.Unmarshal(data.Signal, &calleeSignal); err != nil || calleeSignal.Kind != "offer" || calleeSignal.Description.Type != webrtc.SDPTypeOffer {
+		t.Fatalf("unexpected Pion callee offer payload: %s (%v)", data.Signal, err)
+	}
+
+	// The receiver can answer without subscribing to message delivery.
+	calleePeer, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatalf("create callee peer: %v", err)
+	}
+	defer calleePeer.Close()
+	if _, err := calleePeer.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendrecv}); err != nil {
+		t.Fatalf("add callee audio transceiver: %v", err)
+	}
+	if err := calleePeer.SetRemoteDescription(calleeSignal.Description); err != nil {
+		t.Fatalf("set callee remote offer: %v", err)
+	}
+	answer, err := calleePeer.CreateAnswer(nil)
+	if err != nil {
+		t.Fatalf("create callee answer: %v", err)
+	}
+	gathered := webrtc.GatheringCompletePromise(calleePeer)
+	if err := calleePeer.SetLocalDescription(answer); err != nil {
+		t.Fatalf("set callee local answer: %v", err)
+	}
+	select {
+	case <-gathered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("callee ICE gathering timed out")
+	}
+	send(t, receiver, map[string]any{
+		"type": protocol.ClientCallSignal,
+		"data": map[string]any{
+			"conversation_id": conversationID,
+			"to_user_id":      callerID,
+			"call_id":         callID,
+			"signal":          map[string]any{"kind": "answer", "description": calleePeer.LocalDescription()},
+		},
+	})
+	acceptedEnvelope := readCallSignalKind(t, caller, "accepted")
+	if err := json.Unmarshal(acceptedEnvelope.Data, &data); err != nil {
+		t.Fatalf("decode call accepted notification: %v", err)
+	}
+	if data.FromUserID != receiverID || data.ToUserID != callerID || data.CallID != callID {
+		t.Fatalf("unexpected call accepted routing: %+v", data)
+	}
+
+	// Ending from the receiving browser must notify the original caller and
+	// close the gateway relay for both users.
+	send(t, receiver, map[string]any{
+		"type": protocol.ClientCallSignal,
+		"data": map[string]any{
+			"conversation_id": conversationID,
+			"to_user_id":      callerID,
+			"call_id":         callID,
+			"signal":          map[string]any{"kind": "hangup"},
+		},
+	})
+	hangupEnvelope := readCallSignalKind(t, caller, "hangup")
+	if err := json.Unmarshal(hangupEnvelope.Data, &data); err != nil {
+		t.Fatalf("decode call hangup notification: %v", err)
+	}
+	if data.FromUserID != receiverID || data.ToUserID != callerID || data.CallID != callID {
+		t.Fatalf("unexpected call hangup routing: %+v", data)
+	}
+	send(t, receiver, map[string]any{"type": protocol.ClientPing})
+	if got := readEnvelopeType(t, receiver, protocol.ServerPong); got.Type != protocol.ServerPong {
+		t.Fatalf("expected successful Pion answer and pong, got %s: %s", got.Type, got.Data)
+	}
+}
+
+func readEnvelopeType(t *testing.T, conn *websocket.Conn, expected string) protocol.Envelope {
+	t.Helper()
+	for {
+		envelope := readEnvelope(t, conn)
+		if envelope.Type == expected {
+			return envelope
+		}
+	}
+}
+
+func readCallSignalKind(t *testing.T, conn *websocket.Conn, kind string) protocol.Envelope {
+	t.Helper()
+	for {
+		envelope := readEnvelope(t, conn)
+		if envelope.Type != protocol.ServerCallSignal {
+			continue
+		}
+		var data protocol.CallSignalData
+		if err := json.Unmarshal(envelope.Data, &data); err != nil {
+			t.Fatalf("decode call signal while waiting for %q: %v", kind, err)
+		}
+		var signal struct {
+			Kind string `json:"kind"`
+		}
+		if err := json.Unmarshal(data.Signal, &signal); err != nil {
+			t.Fatalf("decode call signal payload: %v", err)
+		}
+		if signal.Kind == kind {
+			return envelope
+		}
+	}
+}
+
+func pionOffer(t *testing.T, video bool) (*webrtc.PeerConnection, webrtc.SessionDescription) {
+	t.Helper()
+	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatalf("create Pion browser peer: %v", err)
+	}
+	if _, err := pc.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendrecv}); err != nil {
+		t.Fatalf("add audio transceiver: %v", err)
+	}
+	if video {
+		if _, err := pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendrecv}); err != nil {
+			t.Fatalf("add video transceiver: %v", err)
+		}
+	}
+	offer, err := pc.CreateOffer(nil)
+	if err != nil {
+		t.Fatalf("create Pion offer: %v", err)
+	}
+	gathered := webrtc.GatheringCompletePromise(pc)
+	if err := pc.SetLocalDescription(offer); err != nil {
+		t.Fatalf("set Pion local offer: %v", err)
+	}
+	select {
+	case <-gathered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("caller ICE gathering timed out")
+	}
+	return pc, *pc.LocalDescription()
+}
+
+func TestCallSignalNATSSubjectRoutesToTargetUserWithoutConversationSubscription(t *testing.T) {
+	conversationID := "11111111-1111-4111-8111-111111111111"
+	callerID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	receiverID := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	callID := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+
+	server, httpServer := testServer(t, &fakeAuthorizer{active: true})
+	receiver := dial(t, httpServer, "http://localhost:8000")
+	authenticate(t, receiver, signToken(t, testSecret, receiverID, time.Now().Add(time.Minute)))
+
+	envelope, err := protocol.NewEnvelope(protocol.ServerCallSignal, &conversationID, nil, protocol.CallSignalData{
+		ConversationID: conversationID,
+		FromUserID:     callerID,
+		ToUserID:       receiverID,
+		CallID:         callID,
+		Signal:         json.RawMessage(`{"kind":"offer"}`),
+	})
+	if err != nil {
+		t.Fatalf("build call signal: %v", err)
+	}
+	raw, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("marshal call signal: %v", err)
+	}
+
+	server.handleBrokerMessage(server.cfg.CallSubjectPrefix+receiverID, raw)
+	got := readEnvelope(t, receiver)
+	if got.Type != protocol.ServerCallSignal {
+		t.Fatalf("expected routed call.signal, got %s", got.Type)
 	}
 }
 

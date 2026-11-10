@@ -20,7 +20,8 @@ export type RealtimeEventType =
     | 'contact.request.updated'
     | 'contact.updated'
     | 'block.updated'
-    | 'sync.required';
+    | 'sync.required'
+    | 'call.signal';
 
 export type RealtimeEnvelope<T = unknown> = {
     version: number;

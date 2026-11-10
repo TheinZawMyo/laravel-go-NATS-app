@@ -65,16 +65,25 @@ Every server frame uses one envelope shape:
 | `typing.stop` | `{ "conversation_id": "…" }` | Requires an existing subscription |
 | `receipt.delivered` | `{ "conversation_id": "…", "message_id": "…", "seq": 105 }` | Requires an existing subscription |
 | `receipt.read` | `{ "conversation_id": "…", "message_id": "…", "seq": 105 }` | Requires an existing subscription |
+| `call.signal` | `{ "conversation_id", "to_user_id", "call_id", "signal" }` | WebRTC offer, answer, ICE candidate, decline, hangup, or video refresh; sender and recipient must both be active conversation members |
 | `ping` | `{ "id": "optional-request-id" }` | Answered with a `pong` envelope |
 
 ## Gateway to client
 
-`connection.ready`, `connection.error`, `pong`, `message.created`, `message.updated`, `message.deleted`, `message.reaction.updated`, `receipt.updated`, `typing.updated`, `presence.updated`, `conversation.updated`, `conversation.subscribed`, `sync.required`.
+`connection.ready`, `connection.error`, `pong`, `message.created`, `message.updated`, `message.deleted`, `message.reaction.updated`, `receipt.updated`, `typing.updated`, `presence.updated`, `call.signal`, `conversation.updated`, `conversation.subscribed`, `sync.required`.
 
 Message events (`message.created`, `message.updated`, `message.deleted`) are never produced by the gateway itself. Laravel commits them to the `outbox_events` table in the same transaction as the message, and the worker publishes them to
 `chat.events.conversation.<conversation-id>`; the gateway forwards the envelope unchanged. `data` therefore has exactly the shape of the REST message resource, and the event is delivered to **every** subscriber of the conversation, including the sender's other devices.
 
-Typing and receipts use the ephemeral `chat.typing.*` subjects. Delivery is at-least-once: deduplicate by `event_id` and collapse messages by `id`/`client_message_id`.
+Typing and receipts use ephemeral subjects. Call signaling uses `GATEWAY_CALL_SUBJECT_PREFIX` (default `chat.calls.`) plus the recipient user ID, so every Gateway instance can ring that user's active devices even when they have not subscribed to the conversation. Signaling is transient and never enters the durable message stream. Delivery is at-least-once: deduplicate by `event_id` and collapse messages by `id`/`client_message_id`.
+
+## WebRTC calls
+
+The browser uses its native `RTCPeerConnection` API and obtains local media with `getUserMedia`; the Go Gateway uses Pion WebRTC to terminate one peer connection per participant and relay Opus/VP8 RTP between the two connections. The call signaling `data` carries `{ "conversation_id", "from_user_id", "to_user_id", "call_id", "signal" }`; client signals use `offer`, `answer`, `ice`, `decline`, or `hangup`, and the Gateway sends an `accepted` notification only after the callee submits its answer. The browser sends `video.refresh` when its remote video stops advancing. The Gateway requests a keyframe with PLI and FIR, then sends a throttled `video.recover` notification to the publishing browser so it can restart its existing video sender track if RTP remains stalled. The Gateway also sends periodic PLI/FIR requests during a call to help a late receiver or recover from packet loss. Video relay logs report read and written RTP packet deltas every five seconds, which distinguishes source-side RTP stalls from forwarding failures. The Gateway checks active membership for both accounts and routes only to the target account. Offers and answers are sent as soon as they are created; ICE candidates are trickled as separate signals and buffered by clients until the matching remote description is set.
+
+The relay forwards raw RTP, so it cannot transcode. The Gateway's Pion media engine therefore offers only Opus and VP8 (plus VP8 RTX) on both legs; without that restriction a browser could pick H.264/VP9/AV1 on one leg and the other browser would receive an undecodable stream and appear to freeze.
+
+Each media leg uses WebRTC DTLS-SRTP between a browser and the Gateway. Pion terminates SRTP to relay RTP, so call media is transport-encrypted per leg and is not end-to-end encrypted through the Gateway. Configure matching STUN/TURN servers in `GATEWAY_ICE_SERVERS` and the frontend's `VITE_WEBRTC_ICE_SERVERS` JSON arrays; production deployments should provide TURN credentials and expose the Gateway's ICE UDP ports. The WebSocket signaling connection still needs TLS in production.
 
 Realtime state events carry small payloads, never message history:
 
@@ -124,7 +133,7 @@ Errors are sent as an envelope with `type: "connection.error"` and a `data.code`
 
 - Conversation IDs and receipt `message_id` values must be UUIDv4 strings.
 - Receipts must carry `seq > 0`.
-- Typing and receipt frames are rejected with `not_subscribed` unless the connection already subscribed.
+- Typing and receipt frames are rejected with `not_subscribed` unless the connection already subscribed. Call signaling requires membership for both caller and target and is routed by recipient user ID.
 - Broker events for `chat.events.conversation.*` and `chat.typing.*` must carry the same `conversation_id` in the envelope as in the NATS subject. Mismatched events are dropped and counted in `gateway_events_dropped_total{reason="conversation_mismatch"}` so one mis-published event can never fan out into another conversation.
 - `typing.updated` payloads are additionally checked against the subject.
 

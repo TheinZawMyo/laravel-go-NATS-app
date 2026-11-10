@@ -57,6 +57,7 @@ type RealtimeClientOptions = {
     onEvent: (event: RealtimeEnvelope) => void;
     onStatus?: (status: RealtimeStatus) => void;
     onError?: (message: string) => void;
+    onRequestError?: (requestId: string, code: string, message: string) => void;
     baseDelayMs?: number;
     maxDelayMs?: number;
     heartbeatMs?: number;
@@ -309,6 +310,13 @@ export class RealtimeClient {
         });
     }
 
+    public sendCallSignal(data: { conversation_id: string; to_user_id: string; call_id: string; signal: unknown }): string | null {
+        if (!this.ready) return null;
+        const requestId = crypto.randomUUID();
+        this.send({ type: 'call.signal', id: requestId, data });
+        return requestId;
+    }
+
     private async connect(): Promise<void> {
         if (!this.started || this.connecting || this.socket !== null) {
             return;
@@ -445,9 +453,12 @@ export class RealtimeClient {
         }
 
         if (envelope.type === 'connection.error') {
-            const data = envelope.data as { message?: string } | null;
+            const data = envelope.data as { code?: string; message?: string; request_id?: string } | null;
 
             this.options.onError?.(data?.message ?? 'Realtime request failed.');
+            if (data?.request_id) {
+                this.options.onRequestError?.(data.request_id, data.code ?? 'request_failed', data.message ?? 'Realtime request failed.');
+            }
 
             if (!this.ready) {
                 this.closeSocket(1008, 'authentication failed');

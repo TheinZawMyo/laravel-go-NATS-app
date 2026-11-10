@@ -14,12 +14,14 @@ import (
 	"github.com/coder/websocket"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
+	"github.com/pion/webrtc/v4"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/time/rate"
 
 	"chatapp/gateway/internal/auth"
 	"chatapp/gateway/internal/broker"
+	"chatapp/gateway/internal/calls"
 	"chatapp/gateway/internal/config"
 	"chatapp/gateway/internal/dedupe"
 	"chatapp/gateway/internal/presence"
@@ -74,6 +76,7 @@ type Server struct {
 	consumer  *broker.Consumer
 	verify    *auth.Verifier
 	clients   *registry.Registry
+	calls     *calls.Manager
 	metrics   *metrics
 	http      *http.Server
 	conns     sync.WaitGroup
@@ -156,6 +159,37 @@ func newServer(cfg config.Config, logger *slog.Logger, deps dependencies) *Serve
 	}
 
 	s.metrics = newMetrics(s.clients)
+	var iceServers []webrtc.ICEServer
+	if err := json.Unmarshal([]byte(cfg.CallICEServers), &iceServers); err != nil {
+		logger.Error("invalid WebRTC ICE server configuration", "error", err)
+	}
+	s.calls = calls.NewManager(iceServers, func(signal calls.Signal) {
+		payload := map[string]any{"kind": signal.Kind}
+		if signal.Description != nil {
+			payload["description"] = signal.Description
+		}
+		if signal.Candidate != nil {
+			payload["candidate"] = signal.Candidate
+		}
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			s.logger.Error("failed to encode WebRTC signal", "error", err)
+			return
+		}
+		envelope, err := protocol.NewEnvelope(protocol.ServerCallSignal, &signal.ConversationID, nil, protocol.CallSignalData{
+			ConversationID: signal.ConversationID,
+			FromUserID:     signal.FromUserID,
+			ToUserID:       signal.ToUserID,
+			CallID:         signal.CallID,
+			Signal:         raw,
+		})
+		if err != nil {
+			s.logger.Error("failed to create WebRTC envelope", "error", err)
+			return
+		}
+		s.publishCallSignal(envelope, signal.ToUserID)
+	})
+	s.calls.SetLogger(logger)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.healthz)
@@ -192,6 +226,9 @@ func (s *Server) Run(ctx context.Context) error {
 	s.logger.Info("gateway shutting down", "connections", s.clients.Count())
 
 	s.drainConnections()
+	if s.calls != nil {
+		s.calls.CloseAll()
+	}
 
 	if err := s.http.Shutdown(shutdownCtx); err != nil {
 		s.logger.Warn("gateway http shutdown failed", "error", err)
@@ -229,6 +266,9 @@ func (s *Server) drainConnections() {
 
 func (s *Server) Close() {
 	s.cancel()
+	if s.calls != nil {
+		s.calls.CloseAll()
+	}
 
 	for _, client := range s.clients.All() {
 		if connection, ok := client.(*Connection); ok {
@@ -347,8 +387,8 @@ func (s *Server) subscribeBroker() error {
 	}
 
 	// Durable conversation events come from JetStream so nothing is lost while
-	// the gateway restarts. Typing and presence stay on core NATS: they are
-	// worthless a second later and must never be replayed.
+	// the gateway restarts. Typing, call signaling, and presence stay on core
+	// NATS because they are transient and must never be replayed.
 	s.consumer = broker.New(s.nats, s.logger, broker.Options{
 		Enabled:    s.cfg.JetStreamEnabled,
 		Stream:     s.cfg.JetStreamStream,
@@ -366,6 +406,7 @@ func (s *Server) subscribeBroker() error {
 
 	for _, subject := range []string{
 		s.cfg.TypingSubjectPrefix + ">",
+		s.cfg.CallSubjectPrefix + ">",
 		s.cfg.PresenceSubjectPrefix + ">",
 		s.cfg.ReceiptSubjectPrefix + ">",
 	} {
@@ -472,6 +513,14 @@ func (s *Server) handleBrokerMessage(subject string, raw []byte) {
 		}
 
 		clients = s.clients.Subscribers(conversationID)
+	case strings.HasPrefix(subject, s.cfg.CallSubjectPrefix):
+		userID := strings.TrimPrefix(subject, s.cfg.CallSubjectPrefix)
+		var data protocol.CallSignalData
+		if !validID(userID) || envelope.Type != protocol.ServerCallSignal || envelope.ConversationID == nil || !validID(*envelope.ConversationID) || json.Unmarshal(envelope.Data, &data) != nil || data.ToUserID != userID || data.ConversationID != *envelope.ConversationID || !validID(data.FromUserID) || !validID(data.CallID) {
+			s.metrics.eventsDropped.WithLabelValues("invalid_call_signal").Inc()
+			return
+		}
+		clients = s.clients.ByUser(userID)
 	case strings.HasPrefix(subject, s.cfg.PresenceSubjectPrefix):
 		conversationID := strings.TrimPrefix(subject, s.cfg.PresenceSubjectPrefix)
 		if !s.subjectMatchesEnvelope(subject, conversationID, envelope) {
@@ -558,6 +607,22 @@ func (s *Server) publishEphemeral(envelope protocol.Envelope, subject string, co
 	}
 
 	s.deliver(s.clients.Subscribers(conversationID), raw, "local")
+}
+
+func (s *Server) publishCallSignal(envelope protocol.Envelope, userID string) {
+	raw, err := json.Marshal(envelope)
+	if err != nil {
+		s.logger.Error("failed to encode call signal", "error", err)
+		return
+	}
+	if s.nats != nil {
+		if err := s.nats.Publish(s.cfg.CallSubjectPrefix+userID, raw); err != nil {
+			s.metrics.eventsDropped.WithLabelValues("publish_failed").Inc()
+			s.logger.Warn("failed to publish call signal", "user_id", userID, "error", err)
+		}
+		return
+	}
+	s.deliver(s.clients.ByUser(userID), raw, "call")
 }
 
 func (s *Server) publishTyping(conversationID string, data protocol.TypingData) {

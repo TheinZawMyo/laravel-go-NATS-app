@@ -14,6 +14,8 @@ func TestLoadAppliesDurabilityDefaults(t *testing.T) {
 		"GATEWAY_JETSTREAM_MAX_DELIVER",
 		"GATEWAY_PRESENCE_SUBJECT_PREFIX",
 		"GATEWAY_RECEIPT_SUBJECT_PREFIX",
+		"GATEWAY_CALL_SUBJECT_PREFIX",
+		"GATEWAY_ICE_SERVERS",
 		"GATEWAY_PRESENCE_TTL",
 		"GATEWAY_TYPING_TTL",
 		"GATEWAY_EVENT_DEDUPE_TTL",
@@ -46,6 +48,12 @@ func TestLoadAppliesDurabilityDefaults(t *testing.T) {
 	if cfg.ReceiptSubjectPrefix != "chat.receipts." {
 		t.Errorf("ReceiptSubjectPrefix = %q, want chat.receipts.", cfg.ReceiptSubjectPrefix)
 	}
+	if cfg.CallSubjectPrefix != "chat.calls." {
+		t.Errorf("CallSubjectPrefix = %q, want chat.calls.", cfg.CallSubjectPrefix)
+	}
+	if cfg.CallICEServers != `[{"urls":["stun:stun.l.google.com:19302"]}]` {
+		t.Errorf("CallICEServers = %q", cfg.CallICEServers)
+	}
 
 	if cfg.PresenceSubjectTTL != 90*time.Second {
 		t.Errorf("PresenceSubjectTTL = %v, want 90s", cfg.PresenceSubjectTTL)
@@ -73,6 +81,7 @@ func TestLoadParsesDurabilityOverrides(t *testing.T) {
 	t.Setenv("GATEWAY_JETSTREAM_MAX_DELIVER", "3")
 	t.Setenv("GATEWAY_PRESENCE_SUBJECT_PREFIX", "presence.")
 	t.Setenv("GATEWAY_RECEIPT_SUBJECT_PREFIX", "receipts.")
+	t.Setenv("GATEWAY_CALL_SUBJECT_PREFIX", "calls.")
 	t.Setenv("GATEWAY_PRESENCE_TTL", "45s")
 	t.Setenv("GATEWAY_TYPING_TTL", "3s")
 	t.Setenv("GATEWAY_EVENT_DEDUPE_TTL", "1m")
@@ -107,6 +116,8 @@ func TestLoadParsesDurabilityOverrides(t *testing.T) {
 func TestLoadRejectsInvalidDurabilitySettings(t *testing.T) {
 	tests := map[string]string{
 		"GATEWAY_EVENT_DEDUPE_LIMIT":    "0",
+		"GATEWAY_CALL_SUBJECT_PREFIX":   " ",
+		"GATEWAY_ICE_SERVERS":           "not-json",
 		"GATEWAY_EVENT_DEDUPE_TTL":      "0s",
 		"GATEWAY_TYPING_TTL":            "-1s",
 		"GATEWAY_PRESENCE_TTL":          "0s",

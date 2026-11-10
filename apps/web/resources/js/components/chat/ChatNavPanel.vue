@@ -5,11 +5,13 @@ import { UserPlus, Users, X } from '@lucide/vue';
 import NewGroupPanel from '@/components/chat/NewGroupPanel.vue';
 import PeoplePanel from '@/components/chat/PeoplePanel.vue';
 import { Button } from '@/components/ui/button';
+import { useMounted } from '@/composables/useMounted';
 import { useContactsStore } from '@/stores/contacts';
 
 type NavTab = 'people' | 'group';
 
 const contacts = useContactsStore();
+const mounted = useMounted();
 
 const open = ref(false);
 const tab = ref<NavTab>('people');
@@ -61,7 +63,7 @@ useEventListener('keydown', (event: KeyboardEvent) => {
         </Button>
     </nav>
 
-    <Teleport to="body">
+    <Teleport v-if="mounted" to="body">
         <div v-if="open">
             <div
                 class="fixed inset-0 z-40 bg-black/30 backdrop-blur-[1px]"

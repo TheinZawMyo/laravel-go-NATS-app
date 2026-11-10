@@ -36,6 +36,8 @@ export const useRealtimeStore = defineStore('realtime', () => {
     const contacts = useContactsStore();
 
     const typing = ref<Record<string, Record<string, TypingEntry>>>({});
+    const callSignals = ref<RealtimeEnvelope[]>([]);
+    const lastCallSignalError = ref<{ requestId: string; code: string; message: string } | null>(null);
 
     let client: RealtimeClient | null = null;
     let everConnected = false;
@@ -52,6 +54,9 @@ export const useRealtimeStore = defineStore('realtime', () => {
         client = new RealtimeClient({
             onStatus: handleStatus,
             onError: (message) => connection.setError(message),
+            onRequestError: (requestId, code, message) => {
+                lastCallSignalError.value = { requestId, code, message };
+            },
             onEvent: applyEvent,
             tokenEndpoint: '/api/v1/gateway/token',
             getLastSeq: (conversationId) => chat.lastAppliedSeq(conversationId),
@@ -129,6 +134,16 @@ export const useRealtimeStore = defineStore('realtime', () => {
         client?.sendTyping(conversationId, false);
     }
 
+    function sendCallSignal(conversationId: string, toUserId: string, callId: string, signal: unknown): string | null {
+        return client?.sendCallSignal({ conversation_id: conversationId, to_user_id: toUserId, call_id: callId, signal }) ?? null;
+    }
+
+    function takeCallSignals(): RealtimeEnvelope[] {
+        const pending = callSignals.value;
+        callSignals.value = [];
+        return pending;
+    }
+
     function typingUsers(conversationId: string): string[] {
         const entries = typing.value[conversationId] ?? {};
 
@@ -160,6 +175,11 @@ export const useRealtimeStore = defineStore('realtime', () => {
     }
 
     function applyEvent(envelope: RealtimeEnvelope): void {
+        if (envelope.type === 'call.signal') {
+            callSignals.value.push(envelope);
+            if (callSignals.value.length > 20) callSignals.value.shift();
+            return;
+        }
         switch (envelope.type) {
             case 'message.created':
                 void applyCreatedMessage(envelope.data as ChatMessage);
@@ -373,6 +393,10 @@ export const useRealtimeStore = defineStore('realtime', () => {
         syncSubscriptions,
         signalTyping,
         stopTyping,
+        sendCallSignal,
+        lastCallSignalError,
+        takeCallSignals,
+        callSignals,
         typingUsers,
     };
 });
