@@ -21,6 +21,7 @@ use App\Http\Controllers\Api\V1\MeController;
 use App\Http\Controllers\Api\V1\MessageAttachmentController;
 use App\Http\Controllers\Api\V1\MessageController;
 use App\Http\Controllers\Api\V1\MessagePinController;
+use App\Http\Controllers\Api\V1\MessageTranslationController;
 use App\Http\Controllers\Api\V1\ScheduledMessageController;
 use App\Http\Controllers\Api\V1\SearchController;
 use App\Http\Controllers\Api\V1\UploadController;
@@ -117,6 +118,9 @@ Route::middleware(['web', 'auth'])->prefix('v1')->group(function () {
         ->name('api.v1.scheduled-messages.destroy');
     Route::patch('messages/{message}', [MessageController::class, 'update'])->name('api.v1.messages.update');
     Route::delete('messages/{message}', [MessageController::class, 'destroy'])->name('api.v1.messages.destroy');
+    Route::post('messages/{message}/translate', [MessageTranslationController::class, 'store'])
+        ->middleware('throttle:translations')
+        ->name('api.v1.messages.translate');
 
     Route::get('conversations/{conversation}/media', [ConversationMediaController::class, 'index'])->name('api.v1.conversations.media');
     Route::get('messages/{message}/attachments/{attachment}', [MessageAttachmentController::class, 'download'])->name('api.v1.attachments.download');

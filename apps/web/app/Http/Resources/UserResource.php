@@ -29,6 +29,7 @@ class UserResource extends JsonResource
             'last_seen_visibility' => $this->last_seen_visibility->value,
             'profile_visibility' => $this->profile_visibility->value,
             'contact_requests_policy' => $this->contact_requests_policy->value,
+            'translation_language' => $this->translation_language,
             'email_verified_at' => $this->email_verified_at,
             'last_seen_at' => $this->last_seen_at,
             'created_at' => $this->created_at,

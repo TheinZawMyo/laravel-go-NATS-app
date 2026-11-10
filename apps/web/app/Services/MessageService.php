@@ -7,6 +7,7 @@ use App\Models\Message;
 use App\Models\MessageAttachment;
 use App\Models\MessageEdit;
 use App\Models\MessagePin;
+use App\Models\MessageTranslation;
 use App\Models\ScheduledMessage;
 use App\Models\User;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -276,6 +277,12 @@ class MessageService
                 'edited_at' => Carbon::now(),
             ])->save();
 
+            // Cached translations describe the previous text; drop them so
+            // the next request pays for a fresh translation.
+            MessageTranslation::query()
+                ->where('message_id', $message->id)
+                ->delete();
+
             MessageEdit::query()->create([
                 'message_id' => $message->id,
                 'editor_id' => $editor->id,
@@ -301,6 +308,12 @@ class MessageService
                 'body' => null,
                 'deleted_at' => Carbon::now(),
             ])->save();
+
+            // Detached translations of deleted text must not linger in the
+            // database after the message tombstone replaces it.
+            MessageTranslation::query()
+                ->where('message_id', $message->id)
+                ->delete();
 
             if ($wasLastMessage) {
                 $previous = Message::query()

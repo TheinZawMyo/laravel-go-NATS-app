@@ -21,6 +21,11 @@ trait ProfileValidationRules
             'email' => $this->emailRules($userId),
             'bio' => ['nullable', 'string', 'max:500'],
             'status_text' => ['nullable', 'string', 'max:100'],
+            'translation_language' => [
+                'nullable',
+                'string',
+                Rule::in(array_keys((array) config('translation.languages', []))),
+            ],
         ];
     }
 

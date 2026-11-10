@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 
 /**
  * @property string $id
@@ -28,6 +29,7 @@ use Illuminate\Support\Carbon;
  * @property-read User $sender
  * @property-read Message|null $replyTo
  * @property-read Conversation $conversation
+ * @property-read Collection<int, MessageTranslation> $translations
  */
 #[Fillable([
     'conversation_id',
@@ -98,5 +100,13 @@ class Message extends Model
     public function attachments(): HasMany
     {
         return $this->hasMany(MessageAttachment::class);
+    }
+
+    /**
+     * @return HasMany<MessageTranslation, $this>
+     */
+    public function translations(): HasMany
+    {
+        return $this->hasMany(MessageTranslation::class);
     }
 }

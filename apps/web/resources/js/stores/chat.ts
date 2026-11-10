@@ -14,6 +14,7 @@ import type {
     MessagePage,
     MessagePin,
     MessageStatus,
+    MessageTranslation,
     PublicUser,
 } from '@/types';
 
@@ -173,6 +174,14 @@ export const useChatStore = defineStore('chat', () => {
     /** Invite links per group, loaded lazily by the group info dialog. */
     const invites = ref<Record<string, ConversationInvite[]>>({});
     const loadingInvites = ref(false);
+
+    /**
+     * Translations are immutable per message version and language, so the
+     * client mirrors the server cache instead of asking again on every open.
+     * Keys are `${messageId}:${language}`.
+     */
+    const translations = ref<Record<string, MessageTranslation>>({});
+    const translating = ref<Record<string, boolean>>({});
 
     let selectionRequest = 0;
 
@@ -620,6 +629,14 @@ export const useChatStore = defineStore('chat', () => {
         );
 
         if (index >= 0) {
+            const previous = messages.value[index];
+
+            // An edit changes the translatable text, so any client-side copy
+            // of the old translation must not be reused.
+            if (previous !== undefined && previous.body !== normalized.body) {
+                forgetTranslations(normalized.id);
+            }
+
             messages.value.splice(index, 1, normalized);
         } else {
             messages.value.push(normalized);
@@ -1307,6 +1324,62 @@ export const useChatStore = defineStore('chat', () => {
      * The API cannot answer with duplicates, but a retry after a partial
      * failure can, so ids already in memory are skipped.
      */
+    function translationKey(messageId: string, language: string): string {
+        return `${messageId}:${language}`;
+    }
+
+    function forgetTranslations(messageId: string): void {
+        const prefix = `${messageId}:`;
+
+        for (const key of Object.keys(translations.value)) {
+            if (key.startsWith(prefix)) {
+                delete translations.value[key];
+            }
+        }
+    }
+
+    function translationFor(
+        messageId: string,
+        language: string | null | undefined,
+    ): MessageTranslation | null {
+        if (language === null || language === undefined) {
+            return null;
+        }
+
+        return translations.value[translationKey(messageId, language)] ?? null;
+    }
+
+    function isTranslating(messageId: string, language: string): boolean {
+        return translating.value[translationKey(messageId, language)] === true;
+    }
+
+    async function translateMessage(
+        message: ChatMessage,
+        language: string,
+    ): Promise<MessageTranslation> {
+        const key = translationKey(message.id, language);
+        const cached = translations.value[key];
+
+        if (cached !== undefined) {
+            return cached;
+        }
+
+        translating.value[key] = true;
+
+        try {
+            const response = await apiRequest<{ data: MessageTranslation }>(
+                `/api/v1/messages/${message.id}/translate`,
+                { method: 'POST', body: { language } },
+            );
+
+            translations.value[key] = response.data;
+
+            return response.data;
+        } finally {
+            delete translating.value[key];
+        }
+    }
+
     async function fetchMedia(
         conversationId: string,
         reset = false,
@@ -1450,6 +1523,9 @@ export const useChatStore = defineStore('chat', () => {
         mediaHasMoreFor,
         invites,
         loadingInvites,
+        translateMessage,
+        translationFor,
+        isTranslating,
         loadingConversations,
         loadingMessages,
         loadingMore,

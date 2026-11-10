@@ -17,6 +17,7 @@ export type User = {
     last_seen_visibility: LastSeenVisibility;
     profile_visibility: ProfileVisibility;
     contact_requests_policy: ContactRequestPolicy;
+    translation_language: string | null;
     email_verified_at: string | null;
     last_seen_at: string | null;
     created_at: string;

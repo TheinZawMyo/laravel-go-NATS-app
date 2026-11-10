@@ -498,7 +498,7 @@ Only start these after the core messaging flow is reliable.
 - [ ] Threaded replies.
 - [ ] Advanced message search.
 - [ ] Multi-device session improvements.
-- [ ] Message translation.
+- [x] Message translation. (users choose a default translation language in profile settings or pick any supported language per message; translations are cached per message and language, invalidated on edit, and served by a configurable provider (keyless MyMemory by default, or DeepL / self-hosted LibreTranslate); encrypted messages are excluded because the server has no plaintext)
 - [ ] Bot and integration APIs.
 - [ ] Public channels and large broadcast groups.
 - [ ] Additional gateway instances and connection-aware routing.
@@ -574,6 +574,7 @@ The following is the recommended logical schema. Exact column types, constraints
 - `avatar_key NULL`
 - `bio NULL`
 - `status_text NULL`
+- `translation_language NULL` — default target language for message translation
 - `last_seen_at NULL`
 - `created_at`
 - `updated_at`
@@ -651,6 +652,7 @@ Use this table only where per-message receipt state is required. For large group
 - `user_blocks`
 - `message_reactions`
 - `message_edits`
+- `message_translations`
 - `message_pins`
 - `user_devices`
 - `notifications`
@@ -712,6 +714,7 @@ For a browser-first Inertia app, prefer Laravel session authentication with secu
 | POST | `/api/v1/conversations/{id}/members` | Add member |
 | DELETE | `/api/v1/conversations/{id}/members/{userId}` | Remove member |
 | POST | `/api/v1/uploads/presign` | Request upload URL |
+| POST | `/api/v1/messages/{id}/translate` | Translate a message into a supported language |
 | GET | `/api/v1/search/messages?q=...` | Search authorized messages |
 
 Every endpoint must enforce membership and resource authorization. Validate payload sizes, rate limits, and message types on the server.

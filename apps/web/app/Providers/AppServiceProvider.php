@@ -8,6 +8,11 @@ use App\Services\NullMalwareScanner;
 use App\Services\NullPresenceStore;
 use App\Services\PresenceStore;
 use App\Services\RedisPresenceStore;
+use App\Services\Translation\DeepLTranslator;
+use App\Services\Translation\LibreTranslateTranslator;
+use App\Services\Translation\MyMemoryTranslator;
+use App\Services\Translation\NullTranslator;
+use App\Services\Translation\Translator;
 use Carbon\CarbonImmutable;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
@@ -47,6 +52,29 @@ class AppServiceProvider extends ServiceProvider
                 // REST API down with it.
                 return new NullPresenceStore;
             }
+        });
+
+        $this->app->singleton(Translator::class, function (): Translator {
+            $timeout = (int) config('translation.timeout', 8);
+
+            return match (config('translation.provider')) {
+                'deepl' => new DeepLTranslator(
+                    key: $this->stringConfig('translation.deepl.key'),
+                    endpoint: $this->stringConfig('translation.deepl.endpoint'),
+                    timeout: $timeout,
+                ),
+                'libretranslate' => new LibreTranslateTranslator(
+                    url: $this->stringConfig('translation.libretranslate.url') ?? 'http://127.0.0.1:5000',
+                    apiKey: $this->stringConfig('translation.libretranslate.api_key'),
+                    timeout: $timeout,
+                ),
+                'mymemory' => new MyMemoryTranslator(
+                    url: $this->stringConfig('translation.mymemory.url') ?? 'https://api.mymemory.translated.net/get',
+                    email: $this->stringConfig('translation.mymemory.email'),
+                    timeout: $timeout,
+                ),
+                default => new NullTranslator,
+            };
         });
 
         $this->app->singleton(MalwareScanner::class, function (): MalwareScanner {
@@ -112,6 +140,22 @@ class AppServiceProvider extends ServiceProvider
                 $request->user()?->id ?: $request->ip(),
             );
         });
+
+        // Each translation may call a paid provider, so the bucket stays
+        // tighter than ordinary reads. Cached translations still count so a
+        // client cannot hammer the endpoint for cache hits.
+        RateLimiter::for('translations', function (Request $request): Limit {
+            return Limit::perMinute(30)->by(
+                $request->user()?->id ?: $request->ip(),
+            );
+        });
+    }
+
+    private function stringConfig(string $key): ?string
+    {
+        $value = config($key);
+
+        return is_string($value) && $value !== '' ? $value : null;
     }
 
     /**

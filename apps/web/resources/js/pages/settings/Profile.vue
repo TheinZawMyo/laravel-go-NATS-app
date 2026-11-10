@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useInitials } from '@/composables/useInitials';
+import { translationLanguages } from '@/lib/languages';
 import { send } from '@/routes/verification';
 
 const page = usePage();
@@ -19,6 +20,8 @@ const { getInitials } = useInitials();
 
 const inputClass =
     'h-11 rounded-xl border-transparent bg-muted/60 px-4 shadow-none transition-colors focus-visible:border-chat-accent/40 focus-visible:bg-background focus-visible:ring-chat-accent/20';
+const selectClass =
+    'h-11 w-full rounded-xl border border-transparent bg-muted/60 px-3 text-sm outline-none transition-colors focus-visible:border-chat-accent/40 focus-visible:bg-background focus-visible:ring-2 focus-visible:ring-chat-accent/20';
 </script>
 
 <template>
@@ -152,6 +155,39 @@ const inputClass =
                         class="rounded-xl border-transparent bg-muted/60 px-4 py-3 shadow-none focus-visible:border-chat-accent/40 focus-visible:bg-background focus-visible:ring-chat-accent/20"
                     />
                     <InputError :message="errors.bio" />
+                </div>
+
+                <div class="grid gap-2">
+                    <Label for="translation_language" class="text-sm font-medium"
+                        >Translation language</Label
+                    >
+                    <select
+                        id="translation_language"
+                        name="translation_language"
+                        :class="selectClass"
+                    >
+                        <option
+                            value=""
+                            :selected="user.translation_language === null"
+                        >
+                            No default — ask per message
+                        </option>
+                        <option
+                            v-for="language in translationLanguages"
+                            :key="language.code"
+                            :value="language.code"
+                            :selected="
+                                user.translation_language === language.code
+                            "
+                        >
+                            {{ language.name }}
+                        </option>
+                    </select>
+                    <p class="text-xs text-muted-foreground">
+                        Messages are translated into this language by default.
+                        You can still choose another language for each message.
+                    </p>
+                    <InputError :message="errors.translation_language" />
                 </div>
 
                 <div

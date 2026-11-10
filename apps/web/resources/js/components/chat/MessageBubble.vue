@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import {
     CheckCheck,
     FileText,
     Film,
     Flag,
     Image as ImageIcon,
+    Languages,
     MoreHorizontal,
     Music,
     Pencil,
@@ -23,6 +24,10 @@ import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
+    DropdownMenuSeparator,
+    DropdownMenuSub,
+    DropdownMenuSubContent,
+    DropdownMenuSubTrigger,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Textarea } from '@/components/ui/textarea';
@@ -35,8 +40,13 @@ import {
     formatMessageTime,
 } from '@/lib/format';
 import { ApiError } from '@/lib/http';
+import { languageName, translationLanguages } from '@/lib/languages';
 import { useChatStore } from '@/stores/chat';
-import type { ChatMessage, MessageAttachment } from '@/types';
+import type {
+    ChatMessage,
+    MessageAttachment,
+    MessageTranslation,
+} from '@/types';
 
 const props = withDefaults(
     defineProps<{
@@ -57,6 +67,13 @@ const draft = ref('');
 const saving = ref(false);
 const reportOpen = ref(false);
 const localError = ref<string | null>(null);
+const translation = ref<MessageTranslation | null>(null);
+const showTranslation = ref(true);
+const translating = ref(false);
+
+const preferredLanguage = computed(
+    () => user.value?.translation_language ?? null,
+);
 
 const isOwn = computed(() => props.message.sender.id === user.value?.id);
 const isDeleted = computed(() => props.message.deleted_at !== null);
@@ -83,6 +100,20 @@ const hasBody = computed(() => {
 
     return body !== null && body.trim() !== '';
 });
+
+// Encrypted bodies never reach the server in plaintext, so translation is
+// offered only where a server-side provider can read the text.
+const canTranslate = computed(
+    () => !isDeleted.value && hasBody.value && props.message.is_encrypted !== true,
+);
+
+watch(
+    () => props.message.body,
+    () => {
+        translation.value = null;
+        showTranslation.value = true;
+    },
+);
 
 function attachmentIcon(kind: MessageAttachment['kind']): typeof FileText {
     switch (kind) {
@@ -175,6 +206,30 @@ async function togglePin(): Promise<void> {
             error instanceof ApiError
                 ? error.message
                 : 'Unable to update this pin.';
+    }
+}
+
+async function translate(language: string): Promise<void> {
+    if (translating.value || !canTranslate.value) {
+        return;
+    }
+
+    translating.value = true;
+    localError.value = null;
+
+    try {
+        translation.value = await chat.translateMessage(
+            props.message,
+            language,
+        );
+        showTranslation.value = true;
+    } catch (error) {
+        localError.value =
+            error instanceof ApiError
+                ? (error.errors.language?.[0] ?? error.message)
+                : 'Unable to translate this message.';
+    } finally {
+        translating.value = false;
     }
 }
 
@@ -438,6 +493,56 @@ async function remove(): Promise<void> {
                 >
                     Decrypting…
                 </p>
+
+                <template v-if="!editing && !isDeleted && translation !== null">
+                    <div
+                        v-if="showTranslation"
+                        class="mt-2 border-t pt-2"
+                        :class="
+                            isOwn
+                                ? 'border-chat-outgoing-foreground/20'
+                                : 'border-border/60'
+                        "
+                    >
+                        <div
+                            class="mb-1 flex items-center gap-1 text-[10px] font-medium tracking-wide uppercase opacity-70"
+                        >
+                            <Languages class="size-3" aria-hidden="true" />
+                            <span>
+                                {{ languageName(translation.target_language) }}<template
+                                    v-if="translation.source_language !== null"
+                                >
+                                    · from
+                                    {{
+                                        languageName(
+                                            translation.source_language,
+                                        )
+                                    }}</template
+                                >
+                            </span>
+                        </div>
+                        <p class="break-words whitespace-pre-wrap">
+                            {{ translation.translated_body }}
+                        </p>
+                        <button
+                            type="button"
+                            class="mt-1 text-[11px] underline underline-offset-2 opacity-70 transition-opacity hover:opacity-100"
+                            @click="showTranslation = false"
+                        >
+                            Hide translation
+                        </button>
+                    </div>
+                    <button
+                        v-else
+                        type="button"
+                        class="mt-1.5 inline-flex items-center gap-1 text-[11px] underline underline-offset-2 opacity-70 transition-opacity hover:opacity-100"
+                        @click="showTranslation = true"
+                    >
+                        <Languages class="size-3" aria-hidden="true" />
+                        Show {{ languageName(translation.target_language) }}
+                        translation
+                    </button>
+                </template>
             </div>
 
             <div
@@ -490,6 +595,32 @@ async function remove(): Promise<void> {
                         <Reply />
                         Reply
                     </DropdownMenuItem>
+                    <DropdownMenuSub v-if="canTranslate">
+                        <DropdownMenuSubTrigger :disabled="translating">
+                            <Languages />
+                            {{ translating ? 'Translating…' : 'Translate' }}
+                        </DropdownMenuSubTrigger>
+                        <DropdownMenuSubContent
+                            class="max-h-80 overflow-y-auto"
+                        >
+                            <DropdownMenuItem
+                                v-if="preferredLanguage !== null"
+                                @select="translate(preferredLanguage)"
+                            >
+                                To {{ languageName(preferredLanguage) }} (default)
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator
+                                v-if="preferredLanguage !== null"
+                            />
+                            <DropdownMenuItem
+                                v-for="language in translationLanguages"
+                                :key="language.code"
+                                @select="translate(language.code)"
+                            >
+                                {{ language.name }}
+                            </DropdownMenuItem>
+                        </DropdownMenuSubContent>
+                    </DropdownMenuSub>
                     <DropdownMenuItem v-if="canTogglePin" @select="togglePin">
                         <PinOff v-if="pinned" />
                         <Pin v-else />

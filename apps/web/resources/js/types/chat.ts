@@ -78,6 +78,17 @@ export type MessageAttachment = {
     message_seq?: number | null;
 };
 
+export type MessageTranslation = {
+    id: string;
+    message_id: string;
+    target_language: string;
+    source_language: string | null;
+    translated_body: string;
+    provider: string;
+    created_at: string;
+    updated_at: string;
+};
+
 export type ContactRequestStatus =
     | 'pending'
     | 'accepted'

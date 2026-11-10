@@ -41,6 +41,7 @@ use Laravel\Fortify\TwoFactorAuthenticatable;
  * @property LastSeenVisibility $last_seen_visibility
  * @property ProfileVisibility $profile_visibility
  * @property ContactRequestPolicy $contact_requests_policy
+ * @property string|null $translation_language
  * @property Carbon|null $last_seen_at
  * @property string|null $remember_token
  * @property Carbon|null $created_at
@@ -49,7 +50,7 @@ use Laravel\Fortify\TwoFactorAuthenticatable;
  * @property-read string|null $avatar_url
  * @property-read ConversationMember|null $pivot
  */
-#[Fillable(['name', 'username', 'email', 'password', 'avatar_key', 'bio', 'status_text', 'last_seen_at', 'last_seen_visibility', 'profile_visibility', 'contact_requests_policy', 'is_admin'])]
+#[Fillable(['name', 'username', 'email', 'password', 'avatar_key', 'bio', 'status_text', 'last_seen_at', 'last_seen_visibility', 'profile_visibility', 'contact_requests_policy', 'translation_language', 'is_admin'])]
 #[Hidden(['password', 'two_factor_secret', 'two_factor_recovery_codes', 'remember_token'])]
 class User extends Authenticatable implements MustVerifyEmail, PasskeyUser
 {
